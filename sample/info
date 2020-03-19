@@ -1,0 +1,53 @@
+https://wiki.archlinux.org/index.php/KVM
+https://wiki.archlinux.org/index.php/QEMU
+https://wiki.gentoo.org/wiki/QEMU#Networking
+https://kyau.net/wiki/ArchLinux:KVM
+https://help.ubuntu.com/community/KVM/Virsh
+Tools
+http://www.linux-kvm.org/page/Management_Tools
+https://web.archive.org/web/20180104171638/http://nairobi-embedded.org/qemu_monitor_console.html
+Networking
+https://en.wikibooks.org/wiki/QEMU/Networking
+https://wiki.qemu.org/Documentation/Networking
+bridge and tap
+https://blog.elastocloud.org/2015/07/qemukvm-bridged-network-with-tap.html
+qemu Options
+https://wiki.gentoo.org/wiki/QEMU/Options#Display_options
+Image info
+https://en.wikibooks.org/wiki/QEMU/Images#Mounting_an_image_on_the_host
+
+Mount raw image
+https://www.linuxunbound.com/2016/07/mounting-raw-and-qcow2-images/
+PCI-pass
+https://www.linux-kvm.org/page/How_to_assign_devices_with_VT-d_in_KVM
+PCI-pass
+https://wiki.archlinux.org/index.php/PCI_passthrough_via_OVMF
+SR-IOV
+https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/6/html/virtualization_host_configuration_and_guest_installation_guide/sect-virtualization_host_configuration_and_guest_installation_guide-sr_iov-how_sr_iov_libvirt_works
+
+SR-IOV
+https://software.intel.com/en-us/articles/configure-sr-iov-network-virtual-functions-in-linux-kvm
+
+Intel network igb driver parameters
+https://downloadmirror.intel.com/20927/eng/e1000.htm
+
+Qemu vfio-pci
+https://null-src.com/posts/qemu-vfio-pci/post.php
+
+VF bind
+https://www.linux-kvm.org/page/10G_NIC_performance:_VFIO_vs_virtio
+
+GPU pass non root
+https://www.evonide.com/non-root-gpu-passthrough-setup/
+
+VFIO
+https://www.kernel.org/doc/Documentation/vfio.txt
+
+
+https://wiki.debian.org/Hugepages
+
+#Windows virtio drivers
+https://docs.fedoraproject.org/en-US/quick-docs/creating-windows-virtual-machines-using-virtio-drivers/index.htmlhttps://docs.fedoraproject.org/en-US/quick-docs/creating-windows-virtual-machines-using-virtio-drivers/index.html
+
+USB passtrough
+https://www.pugetsystems.com/labs/articles/Multiheaded-NVIDIA-Gaming-using-Ubuntu-14-04-KVM-585/#Step7AddUSBsupport

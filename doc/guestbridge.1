@@ -1,0 +1,51 @@
+.TH guestbridge 1
+.SH NAME
+guestbridge
+.SH SYNOPSIS
+.B guestbridge.run
+.SH DESCRIPTION
+Guest Bridge is a Kernel Virtual Machine Configuration script, written in Bash/SHELL.
+.SH MAINTENANCE FUNCTIONS
+.TP
+.I "guestbridge.info"
+Detailed info about how to use guestbridge.
+.TP
+.I "guestbridge.reconfig/resetconfig"
+install/uninstall the Man page, create a list of loadable kernel modules and create a symbolink to qemu-system-x86_64.
+.TP
+.I "guestbridge.loadmod/listmod"
+Manual loading/listing virtio/vhost kernel modules.
+.TP
+.I "guestbridge.create.img"
+Create an empty image.
+.TP
+.I "guestbridge.install"
+Install an OS from an bootable iso file into the empty image.
+.SH SCRIPTS
+.TP
+.I "guestbridge.run"
+Start and run the privious created and installed OS image/VM. This stage includes creating an network bridge and  an tap device for the guest VM. And an unix:socks for communicating with the guest VM.
+.TP
+.I "guestbridge.socks"
+Send qemu -monitor commands via unix:socks to the OS image.
+
+.SH AUTHORS
+written by Yang Li.
+.SH REPORTING BUGS
+github.com/netcrop/guestbridge
+.SH LIMITATIONS
+.SH LICENSE
+GNU GENERAL PUBLIC LICENSE Version 2
+
+.SH EXAMPLES
+.VE
+.LP
+
+  eva > cd guestbridge
+  eva > source guestbridge.sh
+  eva > guestbridge.info
+  eva > guestbridge.reconfig
+  eva > guestbridge.loadmod
+  eva > guestbridge.install distro.iso distro.raw localhost:0
+  eva > guestbridge.tap.run sample/vm distro.raw br0 enp2s0
+  eva > guestbridge.socks distro info name

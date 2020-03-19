@@ -1,0 +1,11 @@
+-net none
+-device vfio-pci,host=BDF
+-enable-kvm
+-m 512
+-mem-path /dev/hugepages
+-drive file=GUESTIMG,format=raw,if=virtio
+#-nographic
+-smp cpus=2
+-display vnc="[::1]:5"
+-name "GUESTNAME"
+-monitor unix:SOCK,server,nowait
