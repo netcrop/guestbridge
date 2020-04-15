@@ -43,6 +43,11 @@ gb.substitute()
     vfio_pci
     )
     \builtin \source <($cat<<-SUB
+gb.capabilities()
+{
+    local bdf=\${1:?[bdf: 00:0X.Y]}
+    $sudo lspci -v -s \${bdf}
+}
 gb.telnetmonitor()
 {
     local guestname=\${1:?[guestname][cmd to guest]}
@@ -65,10 +70,10 @@ gb.usb.iommu()
     local usb_ctrl pci_path    
     for usb_ctrl in \$($find /sys/bus/usb/devices/usb* -maxdepth 0 -type l); do
         pci_path="\$($dirname "\$($realpath "\${usb_ctrl}")")"
-        \builtin echo "Bus \$($cat "\${usb_ctrl}/busnum") \
+        \builtin echo "Bus \$(<"\${usb_ctrl}/busnum") \
         \$($basename \$pci_path) \
         (IOMMU group \$($basename \$($realpath \$pci_path/iommu_group)))"
-        $lsusb -s "\$($cat "\${usb_ctrl}/busnum"):"
+        $lsusb -s "\$(<"\${usb_ctrl}/busnum"):"
         \builtin echo
     done
 }
@@ -78,7 +83,7 @@ gb.mount.qcow2()
     $egrep -q 'nbd' <<<\$($lsmod) || $sudo $modprobe nbd max_part=63
     $sudo $qemu_nbd -c /dev/nbd0 \${file}
     $sudo parted /dev/nbd0 print
-   \builtin printf "%s\n" "use: mount.ufs | mount -t ufs -o ufstype= /dev/nbd0pX /mnt/X"
+   \builtin printf "%s\n" "use: mount /dev/nbd0pX /mnt/X | mount.ufs | mount -t ufs -o ufstype= /dev/nbd0pX /mnt/X"
 }
 gb.unmount.qcow2()
 {
@@ -124,11 +129,11 @@ GBIOMMU
 }
 gb.run()
 {
-    local help="[guest conf file][guest img][bridg ename][nic][optional debug flag:1|0]"
+    local help="[guest conf file][guest img][opt: bridge name][opt: nic][optional debug flag:1|0]"
     local guestcfg=\${1:?\${help}}
     local guestimg=\${2:?\${help}}
-    local bridge=\${3:?\${help}}
-    local nic=\${4:?\${help}}
+    local bridge=\${3:-.}
+    local nic=\${4:-.}
     local debug=\${5}
     local guestname=\$($basename \${guestimg})
     guestname=\${guestname%.*}
@@ -155,7 +160,9 @@ gb.run()
     -e "s;MAC;\$(gb.mac);g" \
     -e "s;PORT;\$((\${RANDOM}%100+9000));" \
     -e "s;GUESTIMG;\${guestimg};"))
-    $egrep -q -m 1 "tap," <<<\${Config[@]} && gb.tap bridge nic guestname
+    if [[ \${#bridge} -gt 1 && \${#nic} -gt 1 ]];then
+        $egrep -q -m 1 "tap," <<<\${Config[@]} && gb.tap bridge nic guestname
+    fi
     gb.rebindall \${guestcfg} 
     gb.perm /dev/vfio root:kvm g=rwx g=rw
     $cat<<KVMGUEST> \${tmpfile}
@@ -203,7 +210,7 @@ gb.rebindall()
 {
     local help="[vm/hostname config file/BASH indirect expansion]"
     local config=\${1:?\$help}
-    declare -a Config=("\$($cat \$config)")
+    declare -a Config=("\$(<"\$config")")
     declare -a Lspci=("\$($lspci -vmk)")
     declare -a Rebind=("\$($perl - "\${Config[@]}" "\${Lspci[@]}" <<'GBREBINDALL' 
 use $perl_version;

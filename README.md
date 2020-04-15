@@ -1,7 +1,6 @@
 # Guestbridge
 Guest Bridge is a Kernel Virtual Machine Configuration script, written in Bash/SHELL.
-
-  It can be used to create and run KVM guest virtual machine.
+it is used for create and run KVM guest virtual machine.
 ## Install, maintain and uninstall
 
 * For linux/unix system:  
@@ -28,20 +27,12 @@ Switched to branch arch
 
 eva > cd guestbridge
 eva > source guestbridge.sh
-eva > guestbridge.reconfig
-eva > guestbridge.info
-eva > guestbridge.loadmod
-eva > guestbridge.install distro.iso distro.raw localhost:0
-eva > guestbridge.tap.run sample/vm distro.raw br0 enp2s0
-eva > guestbridge.socks distro info name
+# Follow the instruction from this command.
+eva > gb.info
+...
+eva > gb.run [GUEST CONFIG FILE] [GUEST IMAG QCOW2/RAW] [BRIDGE] [NETWORK INTERFACE]
+eva > gb.socks /srv/kvm/socks/[GUEST IMAG SOCKS FILE] info name
 ```
-
-## Recommended usage.
-Add
-```
-source guestbridge/guestbridge.sh
-```
-inside ~/.bashrc
 
 ## For developers
 
@@ -49,7 +40,7 @@ We use rolling releases.
 
 ## Reporting a bug and security issues
 
-github.com/netcrop/guestbridge/issues
+github.com/netcrop/guestbridge/pulls
 
 ## License
 
