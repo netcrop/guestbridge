@@ -167,12 +167,12 @@ gb.run()
     gb.perm /dev/vfio root:kvm g=rwx g=rw
     $cat<<KVMGUEST> \${tmpfile}
 #!$env $bash
-    \builtin exec $sudo $qemu_system_x86_64 -runas kvm \${Config[@]} &
+    \builtin exec $qemu_system_x86_64 -runas kvm \${Config[@]} &
 #    \builtin exec $sudo $qemu_system_x86_64 \${Config[@]} &
 KVMGUEST
     $chown :kvm \${tmpfile}
     $chmod ug=rx \${tmpfile}
-    \${tmpfile}
+    $sudo \${tmpfile}
     $sleep 2
     if [[ -S ${socksdir}/\${guestname} ]];then
         $sudo $chown kvm:kvm ${socksdir}/\${guestname}
