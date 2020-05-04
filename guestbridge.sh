@@ -4,7 +4,7 @@ gb.substitute()
     basename cat ls cut bash man mktemp egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip
-    lspci tee umount mount grub-mkconfig ethtool sleep telnet
+    lspci tee umount mount grub-mkconfig ethtool sleep
     qemu-nbd lsusb realpath mkinitcpio parted less'
     for cmd in $cmdlist;do
         i="$(\builtin type -fp $cmd)"
@@ -16,13 +16,13 @@ gb.substitute()
     done
     perl_version="$($perl -e 'print $^V')"
     moddir='/etc/modules-load.d/'
-    guestbridgedir='/srv/guestbridge/'
-    socksdir='/srv/guestbridge/socks'
+    guestbridgedir='/srv/kvm/'
+    socksdir='/srv/kvm/socks'
     vfiodir='/dev/vfio/'
     bindir='/usr/local/bin/'
     mandir='/usr/local/man/man1'
-    ovmf='/usr/share/ovmf/x64/OVMF_VARS.fd'
-    [[ -r  $ovmf ]] || \builtin \printf "%s\n" "${FUNCNAME}: $ovmf" 
+    ovmfdir='/usr/share/edk2-ovmf/x64/'
+    [[ -d  $ovmfdir ]] || \builtin \printf "%s\n" "${FUNCNAME}: $ovmfdir" 
     declare -a Mod=(
     virtio_balloon
     virtio_blk
@@ -168,6 +168,7 @@ gb.run()
     $cat<<KVMGUEST> \${tmpfile}
 #!$env $bash
     \builtin exec $sudo $qemu_system_x86_64 -runas kvm \${Config[@]} &
+#    \builtin exec $sudo $qemu_system_x86_64 \${Config[@]} &
 KVMGUEST
     $chown :kvm \${tmpfile}
     $chmod ug=rx \${tmpfile}
@@ -472,6 +473,15 @@ gb.reconfig()
     $sudo $chmod u=r,go= /tmp/guestbridge.conf
     $sudo $mv -f /tmp/guestbridge.conf $moddir/guestbridge.conf
     $ln -fs $qemu_system_x86_64 /usr/local/bin/qemu
+    $sudo $mkdir -p $guestbridgedir/ovmf/
+    $sudo $chown -R $USER:kvm $guestbridgedir/
+    $sudo $chmod -R u=rwx,g=rx $guestbridgedir/
+    $sudo $cp $ovmfdir/OVMF_CODE.fd $guestbridgedir/ovmf/OVMF_CODE.fd 
+    $sudo $chown \$USER:kvm $guestbridgedir/ovmf/OVMF_CODE.fd 
+    $sudo $chmod gu=r,o= $guestbridgedir/ovmf/OVMF_CODE.fd 
+    $sudo $cp $ovmfdir/OVMF_VARS.fd $guestbridgedir/ovmf/OVMF_VARS.fd 
+    $sudo $chown \$USER:kvm $guestbridgedir/ovmf/OVMF_VARS.fd 
+    $sudo $chmod gu=r,o= $guestbridgedir/ovmf/OVMF_VARS.fd 
 }
 gb.hugepages()
 {
