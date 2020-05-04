@@ -168,7 +168,7 @@ gb.run()
     $cat<<KVMGUEST> \${tmpfile}
 #!$env $bash
     \builtin exec $qemu_system_x86_64 -runas kvm \${Config[@]} &
-#    \builtin exec $sudo $qemu_system_x86_64 \${Config[@]} &
+#    \builtin exec $qemu_system_x86_64 \${Config[@]} &
 KVMGUEST
     $chown :kvm \${tmpfile}
     $chmod ug=rx \${tmpfile}
