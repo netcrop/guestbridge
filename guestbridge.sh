@@ -485,16 +485,23 @@ gb.reconfig()
 }
 gb.hugepages()
 {
+    set -o xtrace
     local tmpfile=/tmp/\${RANDOM}
     local kvm=\$($egrep -w kvm /etc/group|$cut -d: -f3)
     local entry="hugetlbfs /dev/hugepages hugetlbfs mode=1770,gid=\${kvm} 0 0"
     $cp /etc/fstab \${tmpfile}
-    $sed -i "s;^.*hugepages.*\$;\${entry};g" \${tmpfile}
+    $egrep -q "hugepages" \${tmpfile}
+    if [[ \$? == 0 ]];then
+        $sed -i "s;^.*hugepages.*\$;\${entry};g" \${tmpfile}
+    else
+        \builtin printf "%s\n" "\$entry" >> \${tmpfile}
+    fi
     $sudo $cp \${tmpfile} /etc/fstab
     $sudo $umount -f /dev/hugepages
     $sudo $mount /dev/hugepages
-    \builtin echo 550|$sudo $tee /proc/sys/vm/nr_hugepages
-    \builtin echo "vm.nr_hugepages = 550"|$sudo $tee /etc/sysctl.d/40-hugepages.conf
+    \builtin echo 5500|$sudo $tee /proc/sys/vm/nr_hugepages
+    \builtin echo "vm.nr_hugepages = 5500"|$sudo $tee /etc/sysctl.d/40-hugepages.conf
+    set +o xtrace
 }
 gb.resetconfig()
 {
