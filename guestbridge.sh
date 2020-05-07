@@ -43,6 +43,19 @@ gb.substitute()
     vfio_pci
     )
     \builtin \source <($cat<<-SUB
+
+gb.lspci()
+{
+    $lspci -vmk|$less
+}
+gb.shutdown()
+{
+    local name=\${1:?[guest vm hostname]}
+    [[ -r ${socksdir}/\${name} ]] || return
+    [[ -r \$HOME/.vm/\${name} ]] || return
+    $socat - UNIX-CONNECT:${socksdir}/\${name} <<< 'system_powerdown' || return
+    gb.rebind2config \$HOME/.vm/\${name} || return
+}
 gb.capabilities()
 {
     local bdf=\${1:?[bdf: 00:0X.Y]}
@@ -163,7 +176,7 @@ gb.run()
     if [[ \${#bridge} -gt 1 && \${#nic} -gt 1 ]];then
         $egrep -q -m 1 "tap," <<<\${Config[@]} && gb.tap bridge nic guestname
     fi
-    gb.rebindall \${guestcfg} 
+    gb.rebind2config \${guestcfg} 
     gb.perm /dev/vfio root:kvm g=rwx g=rw
     $cat<<KVMGUEST> \${tmpfile}
 #!$env $bash
@@ -207,10 +220,11 @@ gb.listguests()
     declare -a Res=(\$($ls $socksdir))
     \builtin printf "%s\n" "\${Res[@]/.sock/}"
 }
-gb.rebindall()
+gb.rebind2config()
 {
     local help="[vm/hostname config file/BASH indirect expansion]"
     local config=\${1:?\$help}
+    set -o xtrace
     declare -a Config=("\$(<"\$config")")
     declare -a Lspci=("\$($lspci -vmk)")
     declare -a Rebind=("\$($perl - "\${Config[@]}" "\${Lspci[@]}" <<'GBREBINDALL' 
@@ -219,14 +233,15 @@ use warnings;
 use strict;
 use Data::Dumper;
 my \$pattern='([a-z0-9][a-z0-9]:[a-z0-9][a-z0-9].[a-z0-9])';
-my %Device = ();
-my %Driver = ();
+my %Wish = ();
+my %Real = ();
+my %Module= ();
 my %Res = ();
 \$_ = \$ARGV[0];
 s{
-    -device\s+(.*)\s*,\s*host="{0,1}\${pattern}"{0,1}\n*
+    -device\s+(.+)\s*?,\s*?host="{0,1}?\${pattern}"{0,1}?,{0,1}?\n*?
 }{
-    \$Device{\$2} = "\$1";
+    \$Wish{\$2} = "\$1";
 }mexg;
 \$_ = \$ARGV[1];
 s{
@@ -235,24 +250,35 @@ s{
 %
 }mxg;
 s{
-    Device:\s\${pattern}([^%]*)
-    Driver:\s+([^%\n]*)
+    Device:\s*\${pattern}\n
+    [^%]+
+    Driver:\s*([^\n]+)\n
+    Module:\s*([^\n]+)
 }{
-    \$Driver{\$1}="\$3";
+    \$Real{\$1}="\$2";
+    \$Module{\$1}="\$3";
 }sexg;
-START: foreach( keys %Device){
-    next START if \$Driver{\$_} =~ \$Device{\$_};
-    say "\$_ \$Driver{\$_} \$Device{\$_}";
+foreach(keys %Wish){
+    next if(\$Wish{\$_} =~ \$Real{\$_});
+    if(defined \$Real{\$_}){
+        say "gb.rebind \$_ \$Real{\$_} \$Wish{\$_}";
+        next;
+    }
+    say "gb.loadmod \$Wish{\$_} && gb.bind \$_ \$Wish{\$_}";
 }
-#say Dumper(\\\%Driver);
+#say Dumper(\\\%Wish);
+#say Dumper(\\\%Real);
+#say Dumper(\\\%Module);
 GBREBINDALL
 )")
     local oifs=\$IFS
     IFS=\$'\n'
     for i in \${Rebind[@]};do
-        \builtin eval "gb.rebind \$i"
+     #   echo "\$i"
+       \builtin eval "\$i"
     done
     IFS=\$oifs
+    set +o xtrace
 }
 gb.iommu()
 {
@@ -289,14 +315,6 @@ foreach( sort keys %Res)
 #say Dumper(\\%Pci);
 GBIOMMU
 }
-gb.sriov()
-{
-    local nic=\${1:?[nic interface][nr of VF eg. 0/4]}
-    local nr=\${2:?[nic interface][nr of VF eg. 0/4]}
-    local tmpfile=/tmp/\${RANDOM}
-    [[ -a /sys/class/net/\${nic}/device/sriov_numvfs ]] || return
-    builtin echo \${nr}|$sudo $tee /sys/class/net/\${nic}/device/sriov_numvfs
-}
 gb.socks()
 {
     local help="[guest socket file: /srv/guestbridge/hostname][monitor cmds eg:info name/quit]"
@@ -307,13 +325,7 @@ gb.socks()
     $socat - UNIX-CONNECT:\${sock} <<<"\${cmd}"
     [[ "\$cmd" == 'quit' && -S \${sock} ]] && $sudo $rm -f \${sock}
 }
-gb.shutdown()
-{
-    local guest=\${1:?[guest][cmds]}
-    local cmd="quit"
-    [[ -S $socksdir/\${guest}.sock ]] || return
-    $socat - UNIX-CONNECT:$socksdir/\${guest}.sock <<<"\${cmd}"
-}
+
 gb.info()
 {
     $less<<-KVMINFO
@@ -336,7 +348,7 @@ gb.info()
     
     # kernel module loaded ?
     lsmod |egrep kvm|virtio
-    gb.loadmod
+    gb.loadmodall
     gb.reconfig
 
     #enable hugepages
@@ -399,10 +411,15 @@ gb.listmod()
 {
     \builtin echo ${Mod[@]}
 }
-gb.loadmod()
+gb.loadmodall()
 {
     $sudo $modprobe --verbose --all ${Mod[@]}
     $lsmod|$egrep "virtio|vhost"
+}
+gb.loadmod()
+{
+    local mod=\${1:?[module to load]}
+    $sudo $modprobe \$mod
 }
 gb.modprobeconfig()
 {
