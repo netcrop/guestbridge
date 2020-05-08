@@ -125,7 +125,7 @@ gb.fun2bash()
 \$(\builtin declare -f gb.rebind)
 \$(\builtin declare -f gb.rebind2module)
 \$(\builtin declare -f gb.cron)
-gb.cron
+gb.cron >/dev/null
 GBCRON
     $chown -f $USER:adm \$tmpfile
     $chmod -f ug=rx,o= \$tmpfile
@@ -497,7 +497,7 @@ gb.socks()
     [[ -S ${socksdir}/\$name ]] || return
     \builtin shift
     local cmd=\${@:?[QEMU monitor commands eg: info name]}
-    $socat - UNIX-CONNECT:${socksdir}/\$name <<<"\${cmd}"\$name
+    $socat - UNIX-CONNECT:${socksdir}/\$name <<<"\${cmd}"
     [[ "\$cmd" == 'quit' && -S ${socksdir}/\$name ]] && $sudo $rm -f ${socksdir}\$name
 }
 
@@ -571,6 +571,17 @@ gb.info()
     gb.socks [guestname] [info name|system_powerdown|quit]
     # Shutdown guest and rebind devices passed through
     gb.shutdown [guestname]
+
+    # If guest don't boot direct into OS but stay on UEFI shell
+    # grub.reconfig inside guest OS.
+
+    # install systemd cron service.
+    # enable auto release devices passed through to guest.
+    gb.fun2script
+    gb.croninstall
+    gb.enable
+    gb.start
+    gb.timer
 
     # Leave qemu monitor inside telnet
        ^]
