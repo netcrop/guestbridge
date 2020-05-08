@@ -1,6 +1,8 @@
 # Guestbridge
 Guest Bridge is a Kernel Virtual Machine Configuration script, written in Bash/SHELL.
-it is used for create and run KVM guest virtual machine.
+Support single GPU pass through, and auto release devices passed through to guests.
+Host OS can stay headless/none GUI/none HTTP and communicate with guests via SSH or socket.
+Administrator can keep a minimal footprint on host OS and keep it secure.
 ## Install, maintain and uninstall
 
 * For linux/unix system:  
@@ -19,19 +21,24 @@ sudo
 [Perl File chmod](https://github.com/xenoterracide/File-chmod/blob/master/lib/File/chmod.pm)
 ```
 * Checkout distro specific Releases
-eva > git branch -avv
+> git branch -avv
 * arch
   master
-eva > git checkout arch
+> git checkout arch
 Switched to branch arch
 
-eva > cd guestbridge
-eva > source guestbridge.sh
+> cd guestbridge
+> source guestbridge.sh
 # Follow the instruction from this command.
-eva > gb.info
+> gb.info
 ...
-eva > gb.run [GUEST CONFIG FILE] [GUEST IMAG QCOW2/RAW] [BRIDGE] [NETWORK INTERFACE]
-eva > gb.socks /srv/kvm/socks/[GUEST IMAG SOCKS FILE] info name
+# Install Systemd cron service for auto release devices passed through to guests.
+> gb.croninstall
+...
+# Start guest with bridged network tap or pass through PCI devices via config file
+> gb.run [GUEST IMAG QCOW2/RAW] [BRIDGE] [NETWORK INTERFACE]
+# Communicate with guests via socket.
+> gb.socks /srv/kvm/socks/[GUEST NAME] info name
 ```
 
 ## For developers
