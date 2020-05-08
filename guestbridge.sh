@@ -54,7 +54,9 @@ gb.shutdown()
     [[ -r ${socksdir}/\${name} ]] || return
     [[ -r \$HOME/.vm/\${name} ]] || return
     $socat - UNIX-CONNECT:${socksdir}/\${name} <<< 'system_powerdown' || return
-    gb.rebind2config \$HOME/.vm/\${name} || return
+    $sleep 10
+    gb.rebind2module \$HOME/.vm/\${name} || return
+#    $sudo $rm -f ${socksdir}/\${name}
 }
 gb.capabilities()
 {
@@ -147,9 +149,9 @@ gb.run()
     local guestimg=\${2:?\${help}}
     local bridge=\${3:-.}
     local nic=\${4:-.}
-    local debug=\${5}
     local guestname=\$($basename \${guestimg})
     guestname=\${guestname%.*}
+    local debug=\${5}
     \builtin shopt -s extdebug
     [[ "\${debug}" -eq 1 ]] && debug="set -o xtrace" || \builtin unset -v debug
     \builtin \trap "gb_guest_delocate" SIGHUP SIGTERM SIGINT
@@ -220,14 +222,61 @@ gb.listguests()
     declare -a Res=(\$($ls $socksdir))
     \builtin printf "%s\n" "\${Res[@]/.sock/}"
 }
-gb.rebind2config()
+gb.rebind2module()
 {
     local help="[vm/hostname config file/BASH indirect expansion]"
     local config=\${1:?\$help}
-    set -o xtrace
+    local debug=\${2}
+    \builtin shopt -s extdebug
+    [[ "\${debug}" -eq 1 ]] && debug="set -o xtrace" || \builtin unset -v debug
+    \builtin \trap "gb_delocate" SIGHUP SIGTERM SIGINT
+    gb_delocate()
+    {
+        builtin unset -f _gb.loadmod _gb.bind _gb.rebind gb_delocate
+        builtin trap - SIGHUP SIGTERM SIGINT
+        \builtin set +o xtrace
+        \builtin shopt -u extdebug
+    }
+    \${debug}
+    
+    _gb.loadmod()
+    {
+        local mod=\${1:?[module to load]}
+        $sudo $modprobe \$mod
+    }
+    _gb_bind()
+    {
+        local help='[bdf][bind driver: ehci-pci/vfio-pci]'
+        local bdf=\${1:?\$help}
+        local bind=\${2:?\$help}
+        bdf="0000:\${bdf}"
+        [[ -d "/sys/bus/pci/drivers/\${bind}/" ]] || bind=\${bind/_/-}
+        local idpath="/sys/bus/pci/drivers/\${bind}/new_id"
+        local bindpath="/sys/bus/pci/drivers/\${bind}/bind"
+        local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
+        \builtin echo "\${id/:/ }" |$sudo $tee \${idpath} 2>/dev/null
+        \builtin echo "\${bdf}" |$sudo $tee \${bindpath} 2>/dev/null
+    }
+    _gb.rebind()
+    {
+        local help='[bdf][unbind driver: ehci-pci/vfio-pci][bind driver: ehci-pci/vfio-pci]'
+        local bdf=\${1:?\$help}
+        local unbind=\${2:?\$help}
+        local bind=\${3:?\$help}
+        bdf="0000:\${bdf}"
+        [[ -d "/sys/bus/pci/drivers/\${unbind}/" ]] || unbind=\${unbind/_/-}
+        [[ -d "/sys/bus/pci/drivers/\${bind}/" ]] || bind=\${bind/_/-}
+        local idpath="/sys/bus/pci/drivers/\${bind}/new_id"
+        local unbindpath="/sys/bus/pci/drivers/\${unbind}/unbind"
+        local bindpath="/sys/bus/pci/drivers/\${bind}/bind"
+        local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
+        \builtin echo \${bdf} |$sudo $tee \${unbindpath} 2>/dev/null
+        \builtin echo "\${id/:/ }" |$sudo $tee \${idpath} 2>/dev/null
+        \builtin echo "\${bdf}" |$sudo $tee \${bindpath} 2>/dev/null
+    }
     declare -a Config=("\$(<"\$config")")
     declare -a Lspci=("\$($lspci -vmk)")
-    declare -a Rebind=("\$($perl - "\${Config[@]}" "\${Lspci[@]}" <<'GBREBINDALL' 
+    declare -a Rebind=("\$($perl - "\${Config[@]}" "\${Lspci[@]}" <<'GBREBIND2MODULE' 
 use $perl_version;
 use warnings;
 use strict;
@@ -244,11 +293,12 @@ s{
     \$Wish{\$2} = "\$1";
 }mexg;
 \$_ = \$ARGV[1];
+# Add Block Separator 
 s{
     \n\n
 }{
-%
-}mxg;
+    %
+}sxg;
 s{
     Device:\s*\${pattern}\n
     [^%]+
@@ -259,23 +309,93 @@ s{
     \$Module{\$1}="\$3";
 }sexg;
 foreach(keys %Wish){
-    next if(\$Wish{\$_} =~ \$Real{\$_});
-    if(defined \$Real{\$_}){
-        say "gb.rebind \$_ \$Real{\$_} \$Wish{\$_}";
+    if(!defined \$Real{\$_}){
+        say "gb.loadmod \$Module{\$_} && gb.bind \$_ \$Module{\$_}";
         next;
     }
-    say "gb.loadmod \$Wish{\$_} && gb.bind \$_ \$Wish{\$_}";
+    next if(\$Real{\$_} =~ \$Module{\$_});
+    if( \$Module{\$_} =~ 'amdgpu'){
+        say "gb.loadmod \$Module{\$_} && gb.rebind \$_ \$Real{\$_} \$Module{\$_}";
+        next;
+    } 
+    say "gb.rebind \$_ \$Real{\$_} \$Module{\$_}";
 }
 #say Dumper(\\\%Wish);
 #say Dumper(\\\%Real);
 #say Dumper(\\\%Module);
-GBREBINDALL
+GBREBIND2MODULE
 )")
     local oifs=\$IFS
     IFS=\$'\n'
     for i in \${Rebind[@]};do
      #   echo "\$i"
        \builtin eval "\$i"
+    done
+    IFS=\$oifs
+    gb_delocate
+}
+gb.rebind2config()
+{
+    local help="[vm/hostname config file/BASH indirect expansion]"
+    local config=\${1:?\$help}
+    set -o xtrace
+    declare -a Config=("\$(<"\$config")")
+    declare -a Lspci=("\$($lspci -vmk)")
+    declare -a Rebind=("\$($perl - "\${Config[@]}" "\${Lspci[@]}" <<'GBREBIND2CONFIG' 
+use $perl_version;
+use warnings;
+use strict;
+use Data::Dumper;
+my \$pattern='([a-z0-9][a-z0-9]:[a-z0-9][a-z0-9].[a-z0-9])';
+my %Wish = ();
+my %Real = ();
+my %Module= ();
+my %Res = ();
+\$_ = \$ARGV[0];
+s{
+    -device\s+(.+)\s*?,\s*?host="{0,1}?\${pattern}"{0,1}?,{0,1}?\n*?
+}{
+    \$Wish{\$2} = "\$1";
+}mexg;
+\$_ = \$ARGV[1];
+# Add Block Separator 
+s{
+    \n\n
+}{
+    %
+}sxg;
+s{
+    Device:\s*\${pattern}\n
+    [^%]+
+    Driver:\s*([^\n]+)\n
+    Module:\s*([^\n]+)
+}{
+    \$Real{\$1}="\$2";
+    \$Module{\$1}="\$3";
+}sexg;
+foreach(keys %Wish){
+    if(!defined \$Real{\$_}){
+        say "gb.loadmod \$Wish{\$_} && gb.bind \$_ \$Wish{\$_} \$Module{\$_}";
+        next;
+    }
+    next if(\$Wish{\$_} =~ \$Real{\$_});
+    if(\$Real{\$_} =~ 'amdgpu'){
+        say "gb.rebind \$_ \$Real{\$_} \$Wish{\$_} && gb.unloadmod \$Real{\$_}";
+        next;
+    }
+    say "gb.rebind \$_ \$Real{\$_} \$Wish{\$_}";
+    next;
+}
+#say Dumper(\\\%Wish);
+#say Dumper(\\\%Real);
+#say Dumper(\\\%Module);
+GBREBIND2CONFIG
+)")
+    local oifs=\$IFS
+    IFS=\$'\n'
+    for i in \${Rebind[@]};do
+        echo "\$i"
+#       \builtin eval "\$i"
     done
     IFS=\$oifs
     set +o xtrace
@@ -421,11 +541,16 @@ gb.loadmod()
     local mod=\${1:?[module to load]}
     $sudo $modprobe \$mod
 }
+gb.unloadmod()
+{
+    local mod=\${1:?[module for unload]}
+    $sudo $modprobe --remove \$mod
+}
 gb.modprobeconfig()
 {
     local dir=\${1:?[directry path]}
-    [[ -r \$dir/vfio.conf ]] &&\
-    $sudo $cp \$dir/vfio.conf /etc/modprobe.d/vfio.conf
+#    [[ -r \$dir/vfio.conf ]] &&\
+#    $sudo $cp \$dir/vfio.conf /etc/modprobe.d/vfio.conf
     [[ -r \$dir/blacklist.conf ]] &&\
     $sudo $cp \$dir/blacklist.conf /etc/modprobe.d/blacklist.conf
     [[ -r \$dir/mkinitcpio.conf ]] &&\
@@ -437,7 +562,7 @@ gb.mkinitcpio()
     $sudo $cp \$conf /etc/mkinitcpio.conf 
     $sudo $mkinitcpio && $sudo $mkinitcpio -g /boot/initramfs-linux.img
 }
-gb.unloadmod()
+gb.unloadmodall()
 {
     $sudo $modprobe --remove --verbose --all ${Mod[@]}
     $lsmod|$egrep "virtio|vhost"
@@ -657,6 +782,9 @@ gb.rebind()
     local unbind=\${2:?\$help}
     local bind=\${3:?\$help}
     bdf="0000:\${bdf}"
+#    set -o xtrace
+    [[ -d "/sys/bus/pci/drivers/\${unbind}/" ]] || unbind=\${unbind/_/-}
+    [[ -d "/sys/bus/pci/drivers/\${bind}/" ]] || bind=\${bind/_/-}
     local idpath="/sys/bus/pci/drivers/\${bind}/new_id"
     local unbindpath="/sys/bus/pci/drivers/\${unbind}/unbind"
     local bindpath="/sys/bus/pci/drivers/\${bind}/bind"
@@ -665,6 +793,7 @@ gb.rebind()
     \builtin echo "\${id/:/ }" |$sudo $tee \${idpath} 2>/dev/null
     \builtin echo "\${bdf}" |$sudo $tee \${bindpath} 2>/dev/null
     $lspci -s \${bdf} -k
+ #   set +o xtrace
 }
 gb.bridge.add()
 {
@@ -685,6 +814,7 @@ gb.bind()
     local bdf=\${1:?\$help}
     local bind=\${2:?\$help}
     bdf="0000:\${bdf}"
+    [[ -d "/sys/bus/pci/drivers/\${bind}/" ]] || bind=\${bind/_/-}
     local idpath="/sys/bus/pci/drivers/\${bind}/new_id"
     local bindpath="/sys/bus/pci/drivers/\${bind}/bind"
     local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
