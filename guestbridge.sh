@@ -1,11 +1,12 @@
 gb.substitute()
 {
-    local cmd i cmdlist='sed shred perl dirname
+    local confdir moddir guestbridgedir socksdir vfiodir \
+    bindir mandir ovmfdir cmd i cmdlist='sed shred perl dirname
     basename cat ls cut bash man mktemp egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip
     lspci tee umount mount grub-mkconfig ethtool sleep
-    qemu-nbd lsusb realpath mkinitcpio parted less'
+    qemu-nbd lsusb realpath mkinitcpio parted less systemctl'
     for cmd in $cmdlist;do
         i="$(\builtin type -fp $cmd)"
         if [[ -z $i ]];then
@@ -15,9 +16,10 @@ gb.substitute()
         \builtin eval ${cmd//-/_}=$i
     done
     perl_version="$($perl -e 'print $^V')"
+    confdir='/srv/kvm/conf/'
     moddir='/etc/modules-load.d/'
     guestbridgedir='/srv/kvm/'
-    socksdir='/srv/kvm/socks'
+    socksdir='/srv/kvm/socks/'
     vfiodir='/dev/vfio/'
     bindir='/usr/local/bin/'
     mandir='/usr/local/man/man1'
@@ -44,6 +46,106 @@ gb.substitute()
     )
     \builtin \source <($cat<<-SUB
 
+gb.croninstall()
+{
+    gb.cronuninstall
+    $sudo $cp service /lib/systemd/system/gb.service
+    $sudo $chmod 0644 /lib/systemd/system/gb.service
+    $sudo $cp timer /lib/systemd/system/gb.timer
+    $sudo $chmod 0644 /lib/systemd/system/gb.timer
+    $sudo $ln -s /lib/systemd/system/gb.timer \
+        /lib/systemd/system/timers.target.wants/gb.timer
+}
+gb.cronuninstall()
+{
+    $sudo $rm -f /lib/systemd/system/gb.service
+    $sudo $rm -f /lib/systemd/system/gb.timer
+    $sudo $rm -f /lib/systemd/system/timers.target.wants/gb.timer
+    $sudo $rm -f /var/lib/systemd/timers/stamp-gb.timer
+}
+gb.enable()
+{
+    $sudo $systemctl enable gb.timer
+}
+gb.start()
+{
+    $sudo $systemctl start gb.timer
+    gb.timer
+}
+gb.stop()
+{
+    $sudo $systemctl stop gb.timer
+    gb.timer
+}
+gb.disable()
+{
+    $sudo $systemctl disable gb.timer
+    gb.timer
+}
+gb.mask()
+{
+    $sudo $systemctl mask gb.timer
+    gb.timer
+}
+gb.unmask()
+{
+    $sudo $systemctl unmask gb.timer
+    gb.timer
+}
+gb.reload()
+{
+    $sudo $systemctl daemon-reload
+}
+gb.units()
+{
+    $sudo $systemctl list-units
+}
+gb.timer()
+{
+    $sudo $systemctl list-timers --all
+}
+gb.vmreconfig()
+{
+    local config=\${1:?[vm config file e.g: vm/hostname]}
+    local name=\${config##*/}
+    $cp -f \$config $confdir/\$name
+    $chown -f $USER:kvm $confdir/\$name
+    $chmod -f ug=r $confdir/\$name
+}
+gb.fun2bash()
+{
+#    set -o xtrace
+    local script="${bindir}/gb.cron"
+    local tmpfile=/tmp/\$RANDOM
+    $rm -f \$script
+    $cat <<-GBCRON > \$tmpfile 
+#!$env $bash
+\$(\builtin declare -f gb.bind)
+\$(\builtin declare -f gb.loadmod)
+\$(\builtin declare -f gb.rebind)
+\$(\builtin declare -f gb.rebind2module)
+\$(\builtin declare -f gb.cron)
+gb.cron
+GBCRON
+    $chown -f $USER:adm \$tmpfile
+    $chmod -f ug=rx,o= \$tmpfile
+    $mv -f \$tmpfile \$script
+#    set +o xtrace
+}
+gb.cron()
+{
+    local socket
+    [[ \$($id -u) == 0 ]] || return
+#    set -o xtrace
+    for socket in ${socksdir}/*;do
+        socket=\${socket##*/}
+        $socat - UNIX-CONNECT:${socksdir}/\${socket} <<< 'info name' 2>/dev/null && continue
+        [[ -r ${confdir}/\${socket} ]] || continue
+        gb.rebind2module $confdir/\${socket} || continue 
+        $rm -f ${socksdir}/\${socket}
+    done
+#    set +o xtrace
+}
 gb.lspci()
 {
     $lspci -vmk|$less
@@ -52,11 +154,12 @@ gb.shutdown()
 {
     local name=\${1:?[guest vm hostname]}
     [[ -r ${socksdir}/\${name} ]] || return
-    [[ -r \$HOME/.vm/\${name} ]] || return
+    [[ -r $confdir/\${name} ]] || return
     $socat - UNIX-CONNECT:${socksdir}/\${name} <<< 'system_powerdown' || return
-    $sleep 10
-    gb.rebind2module \$HOME/.vm/\${name} || return
-#    $sudo $rm -f ${socksdir}/\${name}
+    $sleep 5
+    gb.rebind2module $confdir/\${name} || return
+    $socat - UNIX-CONNECT:${socksdir}/\${name} <<< 'info name' 2>/dev/null && return 1
+    $sudo $rm -f ${socksdir}/\${name}
 }
 gb.capabilities()
 {
@@ -144,14 +247,14 @@ GBIOMMU
 }
 gb.run()
 {
-    local help="[guest conf file][guest img][opt: bridge name][opt: nic][optional debug flag:1|0]"
-    local guestcfg=\${1:?\${help}}
-    local guestimg=\${2:?\${help}}
-    local bridge=\${3:-.}
-    local nic=\${4:-.}
-    local guestname=\$($basename \${guestimg})
+    local help="[guest image file][opt: bridge name][opt: nic][optional debug flag:1|0]"
+    local guestimg=\${1:?\${help}}
+    local guestname=\${guestimg##*/}
     guestname=\${guestname%.*}
-    local debug=\${5}
+    local guestcfg=${confdir}/\${guestname}
+    local bridge=\${2:-.}
+    local nic=\${3:-.}
+    local debug=\${4}
     \builtin shopt -s extdebug
     [[ "\${debug}" -eq 1 ]] && debug="set -o xtrace" || \builtin unset -v debug
     \builtin \trap "gb_guest_delocate" SIGHUP SIGTERM SIGINT
@@ -170,19 +273,20 @@ gb.run()
     [[ -c $vfiodir/vfio ]] || return
     [[ -S ${socksdir}/\${guestname} ]] && return
     local tmpfile=/var/tmp/\${RANDOM}
-    declare -a Config=(\$($egrep -v "^#" \${guestcfg}|
-    $sed -e "s;GUESTNAME;\${guestname};g" \
+    declare -a Config=(\$($sed -e "s;^#.*\$;;g" \
+    -e "s;GUESTNAME;\${guestname};g" \
     -e "s;MAC;\$(gb.mac);g" \
     -e "s;PORT;\$((\${RANDOM}%100+9000));" \
-    -e "s;GUESTIMG;\${guestimg};"))
+    -e "s;GUESTIMG;\${guestimg};" \${guestcfg})) 
+
     if [[ \${#bridge} -gt 1 && \${#nic} -gt 1 ]];then
-        $egrep -q -m 1 "tap," <<<\${Config[@]} && gb.tap bridge nic guestname
+        $egrep -q -m 1 "tap,"  <<<\${Config[@]} && gb.tap bridge nic guestname
     fi
     gb.rebind2config \${guestcfg} 
     gb.perm /dev/vfio root:kvm g=rwx g=rw
     $cat<<KVMGUEST> \${tmpfile}
 #!$env $bash
-    \builtin exec $qemu_system_x86_64 -runas kvm \${Config[@]} &
+    \builtin exec $qemu_system_x86_64 -chroot /var/tmp/ -runas kvm \${Config[@]} && $touch /tmp/111 &
 #    \builtin exec $qemu_system_x86_64 \${Config[@]} &
 KVMGUEST
     $chown :kvm \${tmpfile}
@@ -226,54 +330,6 @@ gb.rebind2module()
 {
     local help="[vm/hostname config file/BASH indirect expansion]"
     local config=\${1:?\$help}
-    local debug=\${2}
-    \builtin shopt -s extdebug
-    [[ "\${debug}" -eq 1 ]] && debug="set -o xtrace" || \builtin unset -v debug
-    \builtin \trap "gb_delocate" SIGHUP SIGTERM SIGINT
-    gb_delocate()
-    {
-        builtin unset -f _gb.loadmod _gb.bind _gb.rebind gb_delocate
-        builtin trap - SIGHUP SIGTERM SIGINT
-        \builtin set +o xtrace
-        \builtin shopt -u extdebug
-    }
-    \${debug}
-    
-    _gb.loadmod()
-    {
-        local mod=\${1:?[module to load]}
-        $sudo $modprobe \$mod
-    }
-    _gb_bind()
-    {
-        local help='[bdf][bind driver: ehci-pci/vfio-pci]'
-        local bdf=\${1:?\$help}
-        local bind=\${2:?\$help}
-        bdf="0000:\${bdf}"
-        [[ -d "/sys/bus/pci/drivers/\${bind}/" ]] || bind=\${bind/_/-}
-        local idpath="/sys/bus/pci/drivers/\${bind}/new_id"
-        local bindpath="/sys/bus/pci/drivers/\${bind}/bind"
-        local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
-        \builtin echo "\${id/:/ }" |$sudo $tee \${idpath} 2>/dev/null
-        \builtin echo "\${bdf}" |$sudo $tee \${bindpath} 2>/dev/null
-    }
-    _gb.rebind()
-    {
-        local help='[bdf][unbind driver: ehci-pci/vfio-pci][bind driver: ehci-pci/vfio-pci]'
-        local bdf=\${1:?\$help}
-        local unbind=\${2:?\$help}
-        local bind=\${3:?\$help}
-        bdf="0000:\${bdf}"
-        [[ -d "/sys/bus/pci/drivers/\${unbind}/" ]] || unbind=\${unbind/_/-}
-        [[ -d "/sys/bus/pci/drivers/\${bind}/" ]] || bind=\${bind/_/-}
-        local idpath="/sys/bus/pci/drivers/\${bind}/new_id"
-        local unbindpath="/sys/bus/pci/drivers/\${unbind}/unbind"
-        local bindpath="/sys/bus/pci/drivers/\${bind}/bind"
-        local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
-        \builtin echo \${bdf} |$sudo $tee \${unbindpath} 2>/dev/null
-        \builtin echo "\${id/:/ }" |$sudo $tee \${idpath} 2>/dev/null
-        \builtin echo "\${bdf}" |$sudo $tee \${bindpath} 2>/dev/null
-    }
     declare -a Config=("\$(<"\$config")")
     declare -a Lspci=("\$($lspci -vmk)")
     declare -a Rebind=("\$($perl - "\${Config[@]}" "\${Lspci[@]}" <<'GBREBIND2MODULE' 
@@ -332,13 +388,12 @@ GBREBIND2MODULE
        \builtin eval "\$i"
     done
     IFS=\$oifs
-    gb_delocate
 }
 gb.rebind2config()
 {
     local help="[vm/hostname config file/BASH indirect expansion]"
     local config=\${1:?\$help}
-    set -o xtrace
+#    set -o xtrace
     declare -a Config=("\$(<"\$config")")
     declare -a Lspci=("\$($lspci -vmk)")
     declare -a Rebind=("\$($perl - "\${Config[@]}" "\${Lspci[@]}" <<'GBREBIND2CONFIG' 
@@ -394,11 +449,11 @@ GBREBIND2CONFIG
     local oifs=\$IFS
     IFS=\$'\n'
     for i in \${Rebind[@]};do
-        echo "\$i"
-#       \builtin eval "\$i"
+#        echo "\$i"
+       \builtin eval "\$i"
     done
     IFS=\$oifs
-    set +o xtrace
+#    set +o xtrace
 }
 gb.iommu()
 {
@@ -437,13 +492,13 @@ GBIOMMU
 }
 gb.socks()
 {
-    local help="[guest socket file: /srv/guestbridge/hostname][monitor cmds eg:info name/quit]"
-    local sock=\${1:?\$help}
-    [[ -S \${sock} ]] || return
+    local help="[guest socket hostname][monitor cmds eg:info name/quit]"
+    local name=\${1:?\$help}
+    [[ -S ${socksdir}/\$name ]] || return
     \builtin shift
     local cmd=\${@:?[QEMU monitor commands eg: info name]}
-    $socat - UNIX-CONNECT:\${sock} <<<"\${cmd}"
-    [[ "\$cmd" == 'quit' && -S \${sock} ]] && $sudo $rm -f \${sock}
+    $socat - UNIX-CONNECT:${socksdir}/\$name <<<"\${cmd}"\$name
+    [[ "\$cmd" == 'quit' && -S ${socksdir}/\$name ]] && $sudo $rm -f ${socksdir}\$name
 }
 
 gb.info()
@@ -485,7 +540,7 @@ gb.info()
     # bind vfio-pci to pci device as kernel module.
     cat vm/hostname/vfio.conf
     output: options vfio-pci ids=9809:1301
-    gb.modprobconfig vm/hostname/vfio.conf
+    gb.modprobconfig
 
     # load module precedence.
     gb.mkinitcpio
@@ -499,18 +554,24 @@ gb.info()
     # verify binded vfio-pci devices
     dmesg | egrep -i vfio_pci
     output: vfio_pci: add [9809:1301]
-    lspci -nnk  
-    output: vfio-pci
+    lspci -vmk  
+    Driver: vfio-pci
 
     # Find out BDF of the Nic for pass through
     gb.iommu |egrep "Intel Corporation 82579"
     output BDF : 00:18.0 Ethernet controller 
+    # configure and install guest config file
+    gb.vmreconfig vm/guestname
 
     # Start guest vm
-    gb.run sample/tap-vm vm/img br0 enp0s1
+    gb.run [guestname] br0 enp0s1
 
     # Interact with QEMU monitor
-    gb.telnetmonitor guestname info name/quit
+    gb.socks [guestname] help
+    gb.socks [guestname] [info name|system_powerdown|quit]
+    # Shutdown guest and rebind devices passed through
+    gb.shutdown [guestname]
+
     # Leave qemu monitor inside telnet
        ^]
        telnet> quit
@@ -539,7 +600,8 @@ gb.loadmodall()
 gb.loadmod()
 {
     local mod=\${1:?[module to load]}
-    $sudo $modprobe \$mod
+    [[ \$($id -u) == 0 ]] || local cmd=$sudo
+    \$cmd $modprobe \$mod
 }
 gb.unloadmod()
 {
@@ -615,6 +677,9 @@ gb.reconfig()
     $sudo $chmod u=r,go= /tmp/guestbridge.conf
     $sudo $mv -f /tmp/guestbridge.conf $moddir/guestbridge.conf
     $ln -fs $qemu_system_x86_64 /usr/local/bin/qemu
+    $sudo $mkdir -p $confdir
+    $sudo $chown -R $USER:kvm $confdir
+    $sudo $chmod -R u=rwx,g=rx $confdir
     $sudo $mkdir -p $guestbridgedir/ovmf/
     $sudo $chown -R $USER:kvm $guestbridgedir/
     $sudo $chmod -R u=rwx,g=rx $guestbridgedir/
@@ -782,6 +847,7 @@ gb.rebind()
     local unbind=\${2:?\$help}
     local bind=\${3:?\$help}
     bdf="0000:\${bdf}"
+    [[ \$($id -u) == 0 ]] || local cmd=$sudo
 #    set -o xtrace
     [[ -d "/sys/bus/pci/drivers/\${unbind}/" ]] || unbind=\${unbind/_/-}
     [[ -d "/sys/bus/pci/drivers/\${bind}/" ]] || bind=\${bind/_/-}
@@ -789,9 +855,9 @@ gb.rebind()
     local unbindpath="/sys/bus/pci/drivers/\${unbind}/unbind"
     local bindpath="/sys/bus/pci/drivers/\${bind}/bind"
     local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
-    \builtin echo \${bdf} |$sudo $tee \${unbindpath} 2>/dev/null
-    \builtin echo "\${id/:/ }" |$sudo $tee \${idpath} 2>/dev/null
-    \builtin echo "\${bdf}" |$sudo $tee \${bindpath} 2>/dev/null
+    \builtin echo \${bdf} |\$cmd $tee \${unbindpath} 2>/dev/null
+    \builtin echo "\${id/:/ }" |\$cmd $tee \${idpath} 2>/dev/null
+    \builtin echo "\${bdf}" |\$cmd $tee \${bindpath} 2>/dev/null
     $lspci -s \${bdf} -k
  #   set +o xtrace
 }
@@ -814,12 +880,13 @@ gb.bind()
     local bdf=\${1:?\$help}
     local bind=\${2:?\$help}
     bdf="0000:\${bdf}"
+    [[ \$($id -u) == 0 ]] || local cmd=$sudo
     [[ -d "/sys/bus/pci/drivers/\${bind}/" ]] || bind=\${bind/_/-}
     local idpath="/sys/bus/pci/drivers/\${bind}/new_id"
     local bindpath="/sys/bus/pci/drivers/\${bind}/bind"
     local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
-    \builtin echo "\${id/:/ }" |$sudo $tee \${idpath} 2>/dev/null
-    \builtin echo "\${bdf}" |$sudo $tee \${bindpath} 2>/dev/null
+    \builtin echo "\${id/:/ }" |\$cmd $tee \${idpath} 2>/dev/null
+    \builtin echo "\${bdf}" |\$cmd $tee \${bindpath} 2>/dev/null
     $lspci -s \${bdf} -k
 }
 SUB

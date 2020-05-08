@@ -1,0 +1,13 @@
+-enable-kvm
+-m 2048
+-mem-path /dev/hugepages
+-netdev tap,id=net_GUESTNAME,ifname=tap_GUESTNAME,script=no,downscript=no,vhost=on
+-device virtio-net-pci,netdev=net_GUESTNAME,mac=MAC
+-drive file=GUESTIMG,format=qcow2
+-smp cpus=4
+-cpu host
+-nographic
+-name "GUESTNAME"
+-monitor unix:/srv/kvm/socks/GUESTNAME,server,nowait
+-boot order=c
+-device vfio-pci,host="00:12.0"
