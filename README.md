@@ -1,8 +1,10 @@
 # Guestbridge
-Guest Bridge is a Kernel Virtual Machine Configuration script, written in Bash/SHELL.
-Support single GPU pass through, and auto release devices passed through to guests.
-Host OS can stay headless/none GUI/none HTTP and communicate with guests via SSH or socket.
-Administrator can keep a minimal footprint on host OS and keep it secure.
+Guest Bridge is a Kernel Virtual Machine Configuration script, written in Bash/Perl.
+Supporting GPU (Mouse, Keyboard, USB) pass through via PCIE, 
+to guest OS, and auto release devices back to host OS.
+Meanwhile the host OS remain headless (in case single GPU,keyboard and mouse setup) communication with guests via SSH.
+Administrator can therefore maintain a minimal footprint on host OS and keep it secure.
+
 ## Install, maintain and uninstall
 
 * For linux/unix system:  

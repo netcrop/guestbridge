@@ -370,7 +370,7 @@ foreach(keys %Wish){
         next;
     }
     next if(\$Real{\$_} =~ \$Module{\$_});
-    if( \$Module{\$_} =~ 'amdgpu'){
+    if( \$Module{\$_} =~ "amdgpu|nouveau"){
         say "gb.loadmod \$Module{\$_} && gb.rebind \$_ \$Real{\$_} \$Module{\$_}";
         next;
     } 
@@ -434,7 +434,7 @@ foreach(keys %Wish){
         next;
     }
     next if(\$Wish{\$_} =~ \$Real{\$_});
-    if(\$Real{\$_} =~ 'amdgpu'){
+    if(\$Real{\$_} =~ "amdgpu|nouveau"){
         say "gb.rebind \$_ \$Real{\$_} \$Wish{\$_} && gb.unloadmod \$Real{\$_}";
         next;
     }
