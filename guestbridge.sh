@@ -1,9 +1,9 @@
 gb.substitute()
 {
     local confdir moddir guestbridgedir socksdir vfiodir \
-    bindir mandir ovmfdir cmd i cmdlist='sed shred perl dirname
+    blacklist bindir mandir ovmfdir cmd i cmdlist='sed shred perl dirname
     basename cat ls cut bash man mktemp egrep env mv sudo
-    cp chmod ln chown rm touch head mkdir id find ss
+    cp chmod ln chown rm touch head mkdir id find ss file
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip
     lspci tee umount mount grub-mkconfig ethtool sleep
     qemu-nbd lsusb realpath mkinitcpio parted less systemctl'
@@ -24,6 +24,7 @@ gb.substitute()
     bindir='/usr/local/bin/'
     mandir='/usr/local/man/man1'
     ovmfdir='/usr/share/edk2-ovmf/x64/'
+    blacklist='/etc/modprobe.d/blacklist.conf'
     [[ -d  $ovmfdir ]] || \builtin \printf "%s\n" "${FUNCNAME}: $ovmfdir" 
     declare -a Mod=(
     virtio_balloon
@@ -46,6 +47,76 @@ gb.substitute()
     )
     \builtin \source <($cat<<-SUB
 
+gb.swapgpu()
+{
+    declare -a Lspci=("\$($lspci -vmk)")
+    [[ \$($id -u) == 0 ]] || local cmd=$sudo
+    declare -a Res=(\$($perl - "\${Lspci[@]}" <<'GBSWAPGPU' 
+use $perl_version;
+use warnings;
+use strict;
+#use Data::Dumper;
+my \$bdf='([a-z0-9][a-z0-9]:[a-z0-9][a-z0-9].[a-z0-9])';
+my %Device = ();
+my %Class = ();
+my %Driver = ();
+my %Module = ();
+\$_ = \$ARGV[0];
+s{
+    \n\n
+}{
+    %
+}sxg;
+s{
+    Device:\s*\${bdf}\n
+    Class:\s*(VGA)[^\n]+\n
+    [^%]+
+    Driver:\s*([^\n]+)\n
+    Module:\s*([^\n]+)
+}{
+    if(defined "\$2"){
+        \$Device{\$1}="\$1";
+        \$Class{\$1}="\$2";
+        \$Driver{\$1}="\$3";
+        \$Module{\$1}="\$4";
+        say "\${1}\@\$Driver{\$1}\@\$Module{\$1}"
+    }
+}sexg;
+#say Dumper(\\%Device);
+GBSWAPGPU
+))
+    local i file driver device module
+    for i in \${Res[@]};do
+        device=\${i%%@*}
+        i=\${i#*@}
+        driver=\${i%@*}
+        module=\${i#*@}
+        file="/sys/bus/pci/drivers/\${module}/0000:\${device}/boot_vga"
+        if [[ -r \${file} && "\$($cat \$file)" == 1 ]];then
+            if [[ -n \${driver} ]];then
+                gb.rebind \${device} \${driver} vfio-pci
+                gb.unloadmod \${module}
+                continue
+            fi
+            gb.bind \${device} vfio-pci 
+            gb.unloadmod \${module}
+            continue
+        fi
+        if [[ -n \${driver} ]];then
+            gb.loadmod \${module} && gb.rebind \${device} \${driver} \${module}
+            continue
+        fi
+        gb.loadmod \${module} && gb.bind \${device} \${module}
+    done
+}
+gb.imageinstall()
+{
+    local image=\${1:?[qcow2 image file]}
+    local name=\${image##*/}
+    name=\${name%.*}
+    local mp=/var/tmp/\${name}
+    local config=$confdir/\${name}
+}
 gb.croninstall()
 {
     gb.cronuninstall
@@ -206,7 +277,8 @@ gb.mount.qcow2()
 gb.unmount.qcow2()
 {
     local mp=\${1:?[mount point]}
-    $sudo umount \$mp
+    mp=\$($realpath \$mp)
+    $sudo umount -f \$mp
     $sudo $qemu_nbd -d /dev/nbd0
     $sudo $modprobe --remove --verbose nbd
 }
@@ -330,9 +402,14 @@ gb.rebind2module()
 {
     local help="[vm/hostname config file/BASH indirect expansion]"
     local config=\${1:?\$help}
+    declare -a Blacklist
+    $file \$config|$egrep -q text || return
+    [[ -r $blacklist ]] && \
+    Blacklist=("\$($egrep blacklist $blacklist|$cut -d' ' -f2-)")
     declare -a Config=("\$(<"\$config")")
     declare -a Lspci=("\$($lspci -vmk)")
-    declare -a Rebind=("\$($perl - "\${Config[@]}" "\${Lspci[@]}" <<'GBREBIND2MODULE' 
+    declare -a Rebind=("\$($perl - "\${Config[@]}" \
+    "\${Lspci[@]}" "\${Blacklist[@]}" <<'GBREBIND2MODULE' 
 use $perl_version;
 use warnings;
 use strict;
@@ -342,11 +419,15 @@ my %Wish = ();
 my %Real = ();
 my %Module= ();
 my %Res = ();
+my %Black = ();
+foreach(split(/\s/,\$ARGV[2])){
+    \$Black{\$_} = \$_;
+}
 \$_ = \$ARGV[0];
 s{
-    -device\s+(.+)\s*?,\s*?host="{0,1}?\${pattern}"{0,1}?,{0,1}?\n*?
+    ^-device\s+(.+)\s*?,\s*?host="{0,1}?\${pattern}"{0,1}?,{0,1}?\n*?
 }{
-    \$Wish{\$2} = "\$1";
+     \$Wish{\$2} = "\$1" if(!defined \$Black{\$1});
 }mexg;
 \$_ = \$ARGV[1];
 # Add Block Separator 
@@ -365,16 +446,13 @@ s{
     \$Module{\$1}="\$3";
 }sexg;
 foreach(keys %Wish){
+    next if(defined \$Black{\$Module{\$_}}); 
     if(!defined \$Real{\$_}){
         say "gb.loadmod \$Module{\$_} && gb.bind \$_ \$Module{\$_}";
         next;
     }
     next if(\$Real{\$_} =~ \$Module{\$_});
-    if( \$Module{\$_} =~ "amdgpu|nouveau"){
-        say "gb.loadmod \$Module{\$_} && gb.rebind \$_ \$Real{\$_} \$Module{\$_}";
-        next;
-    } 
-    say "gb.rebind \$_ \$Real{\$_} \$Module{\$_}";
+    say "gb.loadmod \$Module{\$_} && gb.rebind \$_ \$Real{\$_} \$Module{\$_}";
 }
 #say Dumper(\\\%Wish);
 #say Dumper(\\\%Real);
@@ -389,14 +467,24 @@ GBREBIND2MODULE
     done
     IFS=\$oifs
 }
+gb.deviceid()
+{
+    local bdf=\${1:?[bdf]}
+    $lspci -n|$egrep \$bdf | $cut -d' ' -f3
+}
 gb.rebind2config()
 {
     local help="[vm/hostname config file/BASH indirect expansion]"
     local config=\${1:?\$help}
+    declare -a Blacklist
 #    set -o xtrace
+    $file \$config|$egrep -q text || return
+    [[ -r $blacklist ]] && \
+    Blacklist=("\$($egrep blacklist $blacklist|$cut -d' ' -f2-)")
     declare -a Config=("\$(<"\$config")")
     declare -a Lspci=("\$($lspci -vmk)")
-    declare -a Rebind=("\$($perl - "\${Config[@]}" "\${Lspci[@]}" <<'GBREBIND2CONFIG' 
+    declare -a Rebind=("\$($perl - "\${Config[@]}" \
+    "\${Lspci[@]}" "\${Blacklist[@]}" <<'GBREBIND2CONFIG' 
 use $perl_version;
 use warnings;
 use strict;
@@ -406,11 +494,15 @@ my %Wish = ();
 my %Real = ();
 my %Module= ();
 my %Res = ();
+my %Black = ();
+foreach(split(/\s/,\$ARGV[2])){
+    \$Black{\$_} = \$_;
+}
 \$_ = \$ARGV[0];
 s{
-    -device\s+(.+)\s*?,\s*?host="{0,1}?\${pattern}"{0,1}?,{0,1}?\n*?
+    ^-device\s+(.+)\s*?,\s*?host="{0,1}?\${pattern}"{0,1}?,{0,1}?\n*?
 }{
-    \$Wish{\$2} = "\$1";
+    \$Wish{\$2} = "\$1" if(!defined \$Black{\$1});
 }mexg;
 \$_ = \$ARGV[1];
 # Add Block Separator 
@@ -430,7 +522,7 @@ s{
 }sexg;
 foreach(keys %Wish){
     if(!defined \$Real{\$_}){
-        say "gb.loadmod \$Wish{\$_} && gb.bind \$_ \$Wish{\$_} \$Module{\$_}";
+        say "gb.loadmod \$Wish{\$_} && gb.bind \$_ \$Wish{\$_}";
         next;
     }
     next if(\$Wish{\$_} =~ \$Real{\$_});
@@ -444,6 +536,7 @@ foreach(keys %Wish){
 #say Dumper(\\\%Wish);
 #say Dumper(\\\%Real);
 #say Dumper(\\\%Module);
+#say  Dumper(\\\%Black);
 GBREBIND2CONFIG
 )")
     local oifs=\$IFS
@@ -453,7 +546,7 @@ GBREBIND2CONFIG
        \builtin eval "\$i"
     done
     IFS=\$oifs
-#    set +o xtrace
+    set +o xtrace
 }
 gb.iommu()
 {
@@ -498,7 +591,6 @@ gb.socks()
     \builtin shift
     local cmd=\${@:?[QEMU monitor commands eg: info name]}
     $socat - UNIX-CONNECT:${socksdir}/\$name <<<"\${cmd}"
-    [[ "\$cmd" == 'quit' && -S ${socksdir}/\$name ]] && $sudo $rm -f ${socksdir}\$name
 }
 
 gb.info()
@@ -583,6 +675,10 @@ gb.info()
     gb.start
     gb.timer
 
+    # Mount/Unmount Modify qcow2
+    gb.mount.qcow2
+    # Mount partitions and chroot into it.
+
     # Leave qemu monitor inside telnet
        ^]
        telnet> quit
@@ -622,10 +718,14 @@ gb.unloadmod()
 gb.modprobeconfig()
 {
     local dir=\${1:?[directry path]}
-#    [[ -r \$dir/vfio.conf ]] &&\
-#    $sudo $cp \$dir/vfio.conf /etc/modprobe.d/vfio.conf
-    [[ -r \$dir/blacklist.conf ]] &&\
-    $sudo $cp \$dir/blacklist.conf /etc/modprobe.d/blacklist.conf
+    if [[ -r \$dir/vfio.conf ]];then
+        $sudo $cp \$dir/vfio.conf /etc/modprobe.d/vfio.conf
+        $sudo $chmod u=rw,go=r /etc/modprobe.d/vfio.conf
+    fi
+    if [[ -r \$dir/blacklist.conf ]];then
+        $sudo $cp \$dir/blacklist.conf /etc/modprobe.d/blacklist.conf
+        $sudo $chmod u=rw,go=r /etc/modprobe.d/blacklist.conf
+    fi
     [[ -r \$dir/mkinitcpio.conf ]] &&\
     gb.mkinitcpio \$dir/mkinitcpio.conf
 }
@@ -633,6 +733,7 @@ gb.mkinitcpio()
 {
     local conf=\${1:?[mkinitcpio.conf]}
     $sudo $cp \$conf /etc/mkinitcpio.conf 
+    $sudo $chmod u=rw,go=r /etc/mkinitcpio.conf
     $sudo $mkinitcpio && $sudo $mkinitcpio -g /boot/initramfs-linux.img
 }
 gb.unloadmodall()
@@ -647,7 +748,7 @@ gb.create.img()
     local format=\${3:-qcow2}
     [[ ! -d $guestbridgedir ]] && $sudo $mkdir -p $guestbridgedir
     $qemu_img create -f \${format} $guestbridgedir/\${name}.\${format} \${size}
-    $sudo $chown root:kvm $guestbridgedir/\${name}.\${format}
+    $sudo $chown \$USER:kvm $guestbridgedir/\${name}.\${format}
     $sudo $chmod ug=rw $guestbridgedir/\${name}.\${format}
     $qemu_img info $guestbridgedir/\${name}.\${format}
 }
@@ -769,80 +870,16 @@ gb.tap.delete()
 }
 gb.perm()
 {
-    declare -x dir=\${1:?[dir][user:group][.|dirperm][.|fileperm]}
-    $sudo $perl - "\$@" <<'ADMINPERM'
-    #!$env $perl
-    use $perl_version;
-    use warnings;
-    use strict;
-    use Data::Dumper;
-    use File::Find;
-    use File::chmod qw(symchmod);
-    \$File::chmod::DEBUG = 0;
-    \$File::chmod::UMASK = 0;
-    my (\$dir,\$owngrp,\$dirperm,\$fileperm) = @ARGV;
-    my (\$i,\$j,\$own,\$grp) = (0,0,"","");
-    my @Dirs;
-    my @Files;
-    my \$groupfile = "/etc/group";
-     my \$passwdfile = "/etc/passwd";
-    my @Tmp;
-    my @i;
-    my \$tmp;
-    my %Grps;
-    my %Pass;
-    sub insert
-    {
-        if(-l){
-            return;
-        }elsif(-d){
-            \$Dirs[\$i++] = "\$File::Find::name";
-        }else{
-            \$Files[\$j++] = "\$File::Find::name";
-        }
-    }
-    find(\&insert,\$dir);
-    if(\$owngrp && \$owngrp ne "." ){
-        open(INPUT, '<:encoding(UTF-8)', "\$groupfile")
-        or die "Cann't open file: \$groupfile. \$!";
-        chomp(@Tmp=<INPUT>);
-        foreach(@Tmp){
-            @i = split /:/, \$_;
-            \$Grps{\$i[0]} = \$i[2];
-        }
-        open(INPUT, '<:encoding(UTF-8)', "\$passwdfile")
-        or die "Cann't open file: \$passwdfile. \$!";
-        chomp(@Tmp=<INPUT>);
-        foreach(@Tmp){
-            @i = split /:/, \$_;
-            \$Pass{\$i[0]} = \$i[2];
-        }
-        (\$own,\$grp) = split /:/,\$owngrp;
-        die "undefined:\$own or \$grp." if(!defined \$Pass{\$own}||!defined \$Grps{\$grp});
-        chown(\$Pass{\$own},\$Grps{\$grp},@Dirs);
-        chown(\$Pass{\$own},\$Grps{\$grp},@Files);
-    }
-    if(\$dirperm && \$dirperm ne "."){
-        if(\$dirperm =~ m/^\d+\$/){
-            chmod(oct(\$dirperm),@Dirs);
-        }else{
-            symchmod("\$dirperm",@Dirs);
-        }
-    }
-    if(\$fileperm && \$fileperm ne "."){
-        if(\$fileperm =~ m/^\d+\$/){
-            chmod(oct(\$fileperm),@Files);
-        }else{
-            symchmod("\$fileperm",@Files);
-        }
-    }
-ADMINPERM
-}
-gb.deviceid()
-{
-    local interface=\${1:?[interface]}
-    $lspci -s \$(pci.bdf \${interface}) -n |\
-    $cut -d' ' -f3
+    local help='[dir][user:group][dirperm][fileperm]'
+    local dir=\${1:?\$help}
+    local ownership=\${2:?\$help}
+    local dirperm=\${3:?\$help}
+    local fileperm=\${4:?\$help}
+    [[ \$($id -u) == 0 ]] || local cmd=$sudo
+    \$cmd $find \$dir -type d -exec $chown \$ownership {} \;
+    \$cmd $find \$dir -type f -exec $chown \$ownership {} \;
+    \$cmd $find \$dir -type d -exec $chmod \$dirperm {} \;
+    \$cmd $find \$dir -type f -exec $chmod \$fileperm {} \;
 }
 gb.bdf()
 {
