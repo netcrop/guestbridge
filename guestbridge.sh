@@ -4,8 +4,8 @@ gb.substitute()
     blacklist bindir mandir ovmfdir cmd i cmdlist='sed shred perl dirname
     basename cat ls cut bash man mktemp egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss file
-    qemu-img qemu-system-x86_64 modprobe lsmod socat ip
-    lspci tee umount mount grub-mkconfig ethtool sleep
+    qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock
+    lspci tee umount mount grub-mkconfig ethtool sleep modinfo
     qemu-nbd lsusb realpath mkinitcpio parted less systemctl'
     for cmd in $cmdlist;do
         i="$(\builtin type -fp $cmd)"
@@ -47,67 +47,133 @@ gb.substitute()
     )
     \builtin \source <($cat<<-SUB
 
-gb.swapgpu()
+gb.lock()
 {
-    declare -a Lspci=("\$($lspci -vmk)")
+    local cmd fun=\${@:?[function name]}
+    if [[ \${UID} != 0 ]];then
+        cmd=$sudo
+        \$cmd $chown root:adm /run/lock
+        \$cmd $chmod ug=rwx,o=rx /run/lock
+    fi
+    (
+#        set -o xtrace
+        $flock --nonblock 9 || return
+        \builtin \trap "gb_delocate" SIGHUP SIGTERM SIGINT
+        gb_delocate()
+        {
+            [[ -a /var/lock/gb ]] && \${cmd} $rm -f /var/lock/gb
+            \builtin trap - SIGHUP SIGTERM SIGINT
+            \builtin unset -f gb_delocate
+            \builtin set +o xtrace
+        }
+        \$fun
+        gb_delocate 
+    ) 9>/var/lock/gb
+}
+gb.bootgpu()
+{
+    local lspci="\$($lspci -vmk)"
     [[ \$($id -u) == 0 ]] || local cmd=$sudo
-    declare -a Res=(\$($perl - "\${Lspci[@]}" <<'GBSWAPGPU' 
+    declare -a Res=(\$($perl - "\${lspci}" <<'GBSWAPGPU' 
 use $perl_version;
 use warnings;
 use strict;
 #use Data::Dumper;
-my \$bdf='([a-z0-9][a-z0-9]:[a-z0-9][a-z0-9].[a-z0-9])';
-my %Device = ();
-my %Class = ();
-my %Driver = ();
-my %Module = ();
-\$_ = \$ARGV[0];
-s{
-    \n\n
-}{
-    %
-}sxg;
-s{
-    Device:\s*\${bdf}\n
-    Class:\s*(VGA)[^\n]+\n
-    [^%]+
-    Driver:\s*([^\n]+)\n
-    Module:\s*([^\n]+)
-}{
-    if(defined "\$2"){
-        \$Device{\$1}="\$1";
-        \$Class{\$1}="\$2";
-        \$Driver{\$1}="\$3";
-        \$Module{\$1}="\$4";
-        say "\${1}\@\$Driver{\$1}\@\$Module{\$1}"
+my \$bdf='(?:[a-z0-9][a-z0-9]:[a-z0-9][a-z0-9].[a-z0-9])';
+my @Res = ('none','none','none');
+\$_ = \${ARGV[0]};
+foreach(split(/(?:\n){2}/)){
+    next if(!m;Class:\s*VGA\s+?;);
+    foreach(split(/\n/)){
+        if(m;Device:\s*(\$bdf)\$;){
+            \$Res[0] = "\$1";
+        }elsif(m;Driver:\s*([^\s]+)\$;){
+            \$Res[1] = "\$1"; 
+        }elsif(m;Module:\s*([^\s]+)\$;){
+            \$Res[2] = "\$1";
+        }
     }
-}sexg;
-#say Dumper(\\%Device);
+    say join('@', @{Res});
+    @Res = ('none','none','none');
+}
 GBSWAPGPU
 ))
+#    set -o xtrace
+    local i
+    declare -a Entry
+    for i in \${Res[@]};do
+        Entry=(\${i//@/ })
+        file="/sys/bus/pci/drivers/\${Entry[2]}/0000:\${Entry[0]}/boot_vga"
+        [[ -r \${file} && "\$($cat \$file)" == 1 ]] && return
+        gb.loadmod \${Entry[2]} 
+        if [[ \${Entry[1]} =~ 'none' ]];then
+            gb.bind \${Entry[1]} \${Entry[2]}
+            continue
+        fi
+        [[ \${Entry[1]} =~ \${Entry[2]} ]] && continue
+        gb.rebind \${Entry[@]}
+        return
+    done
+    set +o xtrace
+}
+gb.swapgpu()
+{
+    local lspci="\$($lspci -vmk)"
+    [[ \$($id -u) == 0 ]] || local cmd=$sudo
+    declare -a Res=(\$($perl - "\${lspci}" <<'GBSWAPGPU' 
+use $perl_version;
+use warnings;
+use strict;
+#use Data::Dumper;
+my \$bdf='(?:[a-z0-9][a-z0-9]:[a-z0-9][a-z0-9].[a-z0-9])';
+my @Res = ('none','none','none');
+\$_ = \${ARGV[0]};
+foreach(split(/(?:\n){2}/)){
+    next if(!m;Class:\s*VGA\s+?;);
+    foreach(split(/\n/)){
+        if(m;Device:\s*(\$bdf)\$;){
+            \$Res[0] = "\$1";
+        }elsif(m;Driver:\s*([^\s]+)\$;){
+            \$Res[1] = "\$1"; 
+        }elsif(m;Module:\s*([^\s]+)\$;){
+            \$Res[2] = "\$1";
+        }
+    }
+    say join('@', @{Res});
+    @Res = ('none','none','none');
+}
+#say Dumper(\\@_);
+GBSWAPGPU
+))
+#    set -o xtrace
     local i file driver device module
     for i in \${Res[@]};do
+#        echo \$i
         device=\${i%%@*}
         i=\${i#*@}
         driver=\${i%@*}
         module=\${i#*@}
         file="/sys/bus/pci/drivers/\${module}/0000:\${device}/boot_vga"
+        # Swap off
         if [[ -r \${file} && "\$($cat \$file)" == 1 ]];then
-            if [[ -n \${driver} ]];then
-                gb.rebind \${device} \${driver} vfio-pci
-                gb.unloadmod \${module}
+            if [[ \${driver} =~ 'none' ]];then
+                gb.bind \${device} vfio-pci
                 continue
             fi
-            gb.bind \${device} vfio-pci 
-            gb.unloadmod \${module}
+            gb.rebind \${device} \${driver} vfio-pci
+            [[ \${driver} =~ \${module} ]] && gb.unloadmod \${module}
             continue
         fi
-        if [[ -n \${driver} ]];then
-            gb.loadmod \${module} && gb.rebind \${device} \${driver} \${module}
+        # Swap on 
+        gb.loadmod \${module} 
+        if [[ \${driver} =~ 'none' ]];then
+            gb.bind \${device} \${module}
             continue
         fi
-        gb.loadmod \${module} && gb.bind \${device} \${module}
+#        [[ \${driver} =~ \${module} ]] && continue
+        gb.rebind \${device} \${driver} \${module}
     done
+    set +o xtrace
 }
 gb.imageinstall()
 {
@@ -191,12 +257,14 @@ gb.fun2bash()
     $rm -f \$script
     $cat <<-GBCRON > \$tmpfile 
 #!$env $bash
+\$(\builtin declare -f gb.lock)
+\$(\builtin declare -f gb.bootgpu)
 \$(\builtin declare -f gb.bind)
 \$(\builtin declare -f gb.loadmod)
 \$(\builtin declare -f gb.rebind)
 \$(\builtin declare -f gb.rebind2module)
 \$(\builtin declare -f gb.cron)
-gb.cron >/dev/null
+gb.lock gb.cron >/dev/null
 GBCRON
     $chown -f $USER:adm \$tmpfile
     $chmod -f ug=rx,o= \$tmpfile
@@ -205,15 +273,24 @@ GBCRON
 }
 gb.cron()
 {
-    local socket
+    local fb socket guestname binding
     [[ \$($id -u) == 0 ]] || return
 #    set -o xtrace
     for socket in ${socksdir}/*;do
-        socket=\${socket##*/}
-        $socat - UNIX-CONNECT:${socksdir}/\${socket} <<< 'info name' 2>/dev/null && continue
-        [[ -r ${confdir}/\${socket} ]] || continue
-        gb.rebind2module $confdir/\${socket} || continue 
-        $rm -f ${socksdir}/\${socket}
+        [[ -S \${socket} ]] || continue
+        guestname=\${socket##*/}
+        $socat - UNIX-CONNECT:\${socket} <<< 'info name' 2>/dev/null && continue
+        [[ -r ${confdir}/\${guestname} ]] || continue
+        gb.rebind2module $confdir/\${guestname} || continue 
+        $rm -f \${socket}
+    done
+    # We trust previous procedure rebind VGA correct
+    # Only do the following when booting host OS
+    [[ -n \$guestname ]] && return
+    for fb in /dev/fb*;do
+        [[ -c \$fb ]] && return
+        gb.bootgpu
+        return
     done
 #    set +o xtrace
 }
@@ -319,6 +396,10 @@ GBIOMMU
 }
 gb.run()
 {
+    gb.lock _gb.run \${@}
+}
+_gb.run()
+{
     local help="[guest image file][opt: bridge name][opt: nic][optional debug flag:1|0]"
     local guestimg=\${1:?\${help}}
     local guestname=\${guestimg##*/}
@@ -408,18 +489,19 @@ gb.rebind2module()
     Blacklist=("\$($egrep blacklist $blacklist|$cut -d' ' -f2-)")
     declare -a Config=("\$(<"\$config")")
     declare -a Lspci=("\$($lspci -vmk)")
-    declare -a Rebind=("\$($perl - "\${Config[@]}" \
+    declare -a Rebind=(\$($perl - "\${Config[@]}" \
     "\${Lspci[@]}" "\${Blacklist[@]}" <<'GBREBIND2MODULE' 
 use $perl_version;
 use warnings;
 use strict;
-use Data::Dumper;
+#use Data::Dumper;
 my \$pattern='([a-z0-9][a-z0-9]:[a-z0-9][a-z0-9].[a-z0-9])';
 my %Wish = ();
 my %Real = ();
 my %Module= ();
-my %Res = ();
 my %Black = ();
+my \$res = '';
+my \$bdf = '';
 foreach(split(/\s/,\$ARGV[2])){
     \$Black{\$_} = \$_;
 }
@@ -430,42 +512,39 @@ s{
      \$Wish{\$2} = "\$1" if(!defined \$Black{\$1});
 }mexg;
 \$_ = \$ARGV[1];
-# Add Block Separator 
-s{
-    \n\n
-}{
-    %
-}sxg;
-s{
-    Device:\s*\${pattern}\n
-    [^%]+
-    Driver:\s*([^\n]+)\n
-    Module:\s*([^\n]+)
-}{
-    \$Real{\$1}="\$2";
-    \$Module{\$1}="\$3";
-}sexg;
+foreach(split(/(?:\n){2}/)){
+    foreach(split(/\n/)){
+        if(m;Device:\s*(\$pattern)\$;){
+            \$bdf = "\$1";
+        }elsif(m;Driver:\s*([^\s]+)\$;){
+            \$Real{\$bdf} = "\$1"; 
+        }elsif(m;Module:\s*([^\s]+)\$;){
+            \$Module{\$bdf} = "\$1";
+        }
+    }
+}
 foreach(keys %Wish){
-    next if(defined \$Black{\$Module{\$_}}); 
     if(!defined \$Real{\$_}){
-        say "gb.loadmod \$Module{\$_} && gb.bind \$_ \$Module{\$_}";
+        \$_ = "gb.loadmod \$Module{\$_} && gb.bind \$_ \$Module{\$_}";
+        s/\s/@/g;
+        say;
         next;
     }
     next if(\$Real{\$_} =~ \$Module{\$_});
-    say "gb.loadmod \$Module{\$_} && gb.rebind \$_ \$Real{\$_} \$Module{\$_}";
+    \$_ = "gb.loadmod \$Module{\$_} && gb.rebind \$_ \$Real{\$_} \$Module{\$_}";
+    s/\s/@/g;
+    say;
 }
-#say Dumper(\\\%Wish);
-#say Dumper(\\\%Real);
 #say Dumper(\\\%Module);
 GBREBIND2MODULE
-)")
-    local oifs=\$IFS
-    IFS=\$'\n'
+))
+    set -o xtrace
+    local i
     for i in \${Rebind[@]};do
-     #   echo "\$i"
-       \builtin eval "\$i"
+#        echo "\${i//@/ }"
+        \builtin eval "\${i//@/ }"
     done
-    IFS=\$oifs
+    set +o xtrace
 }
 gb.deviceid()
 {
@@ -479,21 +558,22 @@ gb.rebind2config()
     declare -a Blacklist
 #    set -o xtrace
     $file \$config|$egrep -q text || return
+    # Just precaution that not load these moudule during pass through.
     [[ -r $blacklist ]] && \
     Blacklist=("\$($egrep blacklist $blacklist|$cut -d' ' -f2-)")
     declare -a Config=("\$(<"\$config")")
     declare -a Lspci=("\$($lspci -vmk)")
-    declare -a Rebind=("\$($perl - "\${Config[@]}" \
+    declare -a Rebind=(\$($perl - "\${Config[@]}" \
     "\${Lspci[@]}" "\${Blacklist[@]}" <<'GBREBIND2CONFIG' 
 use $perl_version;
 use warnings;
 use strict;
-use Data::Dumper;
+#use Data::Dumper;
 my \$pattern='([a-z0-9][a-z0-9]:[a-z0-9][a-z0-9].[a-z0-9])';
+my \$bdf = '';
 my %Wish = ();
 my %Real = ();
 my %Module= ();
-my %Res = ();
 my %Black = ();
 foreach(split(/\s/,\$ARGV[2])){
     \$Black{\$_} = \$_;
@@ -505,47 +585,44 @@ s{
     \$Wish{\$2} = "\$1" if(!defined \$Black{\$1});
 }mexg;
 \$_ = \$ARGV[1];
-# Add Block Separator 
-s{
-    \n\n
-}{
-    %
-}sxg;
-s{
-    Device:\s*\${pattern}\n
-    [^%]+
-    Driver:\s*([^\n]+)\n
-    Module:\s*([^\n]+)
-}{
-    \$Real{\$1}="\$2";
-    \$Module{\$1}="\$3";
-}sexg;
+foreach(split(/(?:\n){2}/)){
+    foreach(split(/\n/)){
+        if(m;Device:\s*(\$pattern)\$;){
+            \$bdf = "\$1";
+        }elsif(m;Driver:\s*([^\s]+)\$;){
+            \$Real{\$bdf} = "\$1"; 
+        }elsif(m;Module:\s*([^\s]+)\$;){
+            \$Module{\$bdf} = "\$1";
+        }
+    }
+}
 foreach(keys %Wish){
     if(!defined \$Real{\$_}){
-        say "gb.loadmod \$Wish{\$_} && gb.bind \$_ \$Wish{\$_}";
+        \$_ = "gb.loadmod \$Wish{\$_} && gb.bind@\$_ \$Wish{\$_}";
+        s/\s/\@/g;
+        say;
         next;
     }
     next if(\$Wish{\$_} =~ \$Real{\$_});
     if(\$Real{\$_} =~ "amdgpu|nouveau"){
-        say "gb.rebind \$_ \$Real{\$_} \$Wish{\$_} && gb.unloadmod \$Real{\$_}";
+        \$_ = "gb.rebind \$_ \$Real{\$_} \$Wish{\$_} && gb.unloadmod \$Real{\$_}";
+        s/\s/\@/g;
+        say;
         next;
     }
-    say "gb.rebind \$_ \$Real{\$_} \$Wish{\$_}";
+    \$_ = "gb.rebind \$_ \$Real{\$_} \$Wish{\$_}";
+    s/\s/\@/g;
+    say;
     next;
 }
-#say Dumper(\\\%Wish);
-#say Dumper(\\\%Real);
-#say Dumper(\\\%Module);
-#say  Dumper(\\\%Black);
 GBREBIND2CONFIG
-)")
-    local oifs=\$IFS
-    IFS=\$'\n'
+))
+#    set -o xtrace
+    local i
     for i in \${Rebind[@]};do
-#        echo "\$i"
-       \builtin eval "\$i"
+#        echo "\${i//@/ }"
+        \builtin eval "\${i//@/ }"
     done
-    IFS=\$oifs
     set +o xtrace
 }
 gb.iommu()
@@ -804,7 +881,7 @@ gb.reconfig()
 }
 gb.hugepages()
 {
-    set -o xtrace
+#    set -o xtrace
     local tmpfile=/tmp/\${RANDOM}
     local kvm=\$($egrep -w kvm /etc/group|$cut -d: -f3)
     local entry="hugetlbfs /dev/hugepages hugetlbfs mode=1770,gid=\${kvm} 0 0"
@@ -887,6 +964,20 @@ gb.bdf()
     $ethtool --driver \${interface}|\
     $egrep -w "bus-info:"|\
     $sed "s;bus-info: \(.*\);\1;"
+}
+gb.unbind()
+{
+    local help='[bdf][unbind driver: ehci-pci/vfio-pci]'
+    local bdf=\${1:?\$help}
+    local unbind=\${2:?\$help}
+    bdf="0000:\${bdf}"
+    [[ \$($id -u) == 0 ]] || local cmd=$sudo
+#    set -o xtrace
+    [[ -d "/sys/bus/pci/drivers/\${unbind}/" ]] || unbind=\${unbind/_/-}
+    local unbindpath="/sys/bus/pci/drivers/\${unbind}/unbind"
+    \builtin echo \${bdf} |\$cmd $tee \${unbindpath} 2>/dev/null
+    $lspci -k -s \${bdf}
+ #   set +o xtrace
 }
 gb.rebind()
 {
