@@ -1,6 +1,6 @@
 # Guestbridge
 Guest Bridge is a Kernel Virtual Machine Configuration script, written in Bash/Perl.
-Supporting GPU (Mouse, Keyboard, USB) pass through via PCIE to guest OS,
+Supporting GPU (Mouse, Keyboard, USB, Network) pass through via PCIE to guest OS,
 and automatic release devices back to host OS.
 Meanwhile the host OS remain headless (in case single GPU,keyboard and mouse setup) communication with guests via SSH.
 Administrator can therefore maintain a minimal footprint on host OS and keep it secure.
@@ -18,9 +18,10 @@ iproute2
 grub
 qemu-headless
 pciutils
+usbutils
 socat
+flock
 sudo
-[Perl File chmod](https://github.com/xenoterracide/File-chmod/blob/master/lib/File/chmod.pm)
 ```
 * Checkout distro specific Releases
 > git branch -avv
@@ -40,7 +41,7 @@ Switched to branch arch
 # Start guest with bridged network tap or pass through PCI devices via config file
 > gb.run [GUEST IMAG QCOW2/RAW] [BRIDGE] [NETWORK INTERFACE]
 # Communicate with guests via socket.
-> gb.socks /srv/kvm/socks/[GUEST NAME] info name
+> gb.socks [GUEST NAME] info name
 ```
 
 ## For developers

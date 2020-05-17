@@ -1,20 +1,36 @@
 gb.substitute()
 {
-    local confdir moddir guestbridgedir socksdir vfiodir \
+    local seed confdir moddir guestbridgedir socksdir virtiofsdsocksdir vfiodir \
     blacklist bindir mandir ovmfdir cmd i cmdlist='sed shred perl dirname
     basename cat ls cut bash man mktemp egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss file
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock
     lspci tee umount mount grub-mkconfig ethtool sleep modinfo
-    qemu-nbd lsusb realpath mkinitcpio parted less systemctl'
+    qemu-nbd lsusb realpath mkinitcpio parted less systemctl virtiofsd'
+    declare -A Devlist=(
+    )
+    cmdlist="${Devlist[@]} $cmdlist"
     for cmd in $cmdlist;do
-        i="$(\builtin type -fp $cmd)"
+        i=($(\builtin type -afp $cmd 2>/dev/null))
         if [[ -z $i ]];then
-            \builtin \printf "%s\n" "${FUNCNAME}: missing $cmd"
-            return
+            if [[ -z ${Devlist[$cmd]} ]];then
+                reslist+=" $cmd"
+            else
+                devlist+=" $cmd"
+            fi
         fi
-        \builtin eval ${cmd//-/_}=$i
+        \builtin eval "local ${cmd//-/_}=${i:-:}"
     done
+    [[ -z $reslist ]] ||\
+    { 
+        \builtin printf "%s\n" \
+        "$FUNCNAME says: ( $reslist ) These Required Commands are missing."
+        return
+    }
+    [[ -z $devlist ]] ||\
+    \builtin printf "%s\n" \
+    "$FUNCNAME says: ( $devlist ) These Optional Commands for further development."
+
     perl_version="$($perl -e 'print $^V')"
     confdir='/srv/kvm/conf/'
     moddir='/etc/modules-load.d/'
@@ -25,6 +41,8 @@ gb.substitute()
     mandir='/usr/local/man/man1'
     ovmfdir='/usr/share/edk2-ovmf/x64/'
     blacklist='/etc/modprobe.d/blacklist.conf'
+    seed='${RANDOM}${RANDOM}'
+    virtiofsdsocksdir='/run/virtiofsd/'
     [[ -d  $ovmfdir ]] || \builtin \printf "%s\n" "${FUNCNAME}: $ovmfdir" 
     declare -a Mod=(
     virtio_balloon
@@ -47,6 +65,59 @@ gb.substitute()
     )
     \builtin \source <($cat<<-SUB
 
+gb.virtiofsd.stop()
+{
+    ps.kill virtiofsd
+    declare -a Pid=(\$($sudo $ls ${virtiofsdsocksdir})) 
+    [[ -n \${Pid[0]} ]] || return
+    $sudo $rm -rf ${virtiofsdsocksdir}
+}
+gb.virtiofsd.config()
+{
+    local guestname=\${1:?\${FUNCNAME}:[guest host name/imagefile/configfile]}
+#    set -o xtrace
+    guestname=\${guestname##*/}
+    guestname=\${guestname%.*}
+    [[ -r ${confdir}/\${guestname} ]] || { set +o xtrace; return; }
+    local sharedir=\$($egrep "virtiofsd" ${confdir}/\${guestname}|$sed "s;^.*virtiofsd/GUESTNAME-\(.*\).sock.*\$;\1;")
+    [[ -n \${sharedir} ]] || { set +o xtrace; return; }
+    local socketname="\${guestname}-\${sharedir}.sock"
+    local socketpath="${virtiofsdsocksdir}\${socketname}"
+    [[ -S \${socketpath} ]] && { set +o xtrace; return; }
+    sharedir=\${sharedir//@//}
+    local tmpfile=/var/tmp/${seed}
+    local tag=\${sharedir%/}
+    tag=\${tag##*/}
+    [[ -d \$sharedir ]] || { set +o xtrace; return; }
+    $cat <<-VIRTIOFSDSTART > \${tmpfile}
+#!$env $bash
+    \builtin exec $virtiofsd --syslog \
+    --socket-path="\${socketpath}" \
+    --thread-pool-size=6 \
+    -o source=\${sharedir} &
+VIRTIOFSDSTART
+    $chmod u=rwx \${tmpfile}
+    $sudo \${tmpfile}
+    $rm -f \${tmpfile}
+    $sleep 4
+    gb.perm ${virtiofsdsocksdir} root:kvm g=rwx g=rw
+    set +o xtrace
+}
+gb.powerdown()
+{
+    local vm=\${1:?[hostname]}
+    gb.socks \$vm system_powerdown
+}
+gb.vmreconfig()
+{
+    local config=\${1:?[vm config file e.g: vm/hostname]}
+    local name=\${config##*/}
+    local tmpfile=/tmp/${seed}
+    $sed -e "s;^#.*\$;;g" -e "/^\$/d" \$config > \$tmpfile
+    $mv -f \$tmpfile $confdir/\$name
+    $chown -f $USER:kvm $confdir/\$name
+    $chmod -f ug=r $confdir/\$name
+}
 gb.lock()
 {
     local cmd fun=\${@:?[function name]}
@@ -116,7 +187,7 @@ GBSWAPGPU
     done
     set +o xtrace
 }
-gb.swapgpu()
+_gb.swapgpu()
 {
     local lspci="\$($lspci -vmk)"
     [[ \$($id -u) == 0 ]] || local cmd=$sudo
@@ -241,15 +312,7 @@ gb.timer()
 {
     $sudo $systemctl list-timers --all
 }
-gb.vmreconfig()
-{
-    local config=\${1:?[vm config file e.g: vm/hostname]}
-    local name=\${config##*/}
-    $cp -f \$config $confdir/\$name
-    $chown -f $USER:kvm $confdir/\$name
-    $chmod -f ug=r $confdir/\$name
-}
-gb.fun2bash()
+gb.fun2script()
 {
 #    set -o xtrace
     local script="${bindir}/gb.cron"
@@ -283,6 +346,8 @@ gb.cron()
         [[ -r ${confdir}/\${guestname} ]] || continue
         gb.rebind2module $confdir/\${guestname} || continue 
         $rm -f \${socket}
+        $rm -f ${virtiofsdsocksdir}/\${guestname}-*
+        $rm -f ${virtiofsdsocksdir}/${virtiofsdsocksdir////.}\${guestname}-*
     done
     # We trust previous procedure rebind VGA correct
     # Only do the following when booting host OS
@@ -396,12 +461,13 @@ GBIOMMU
 }
 gb.run()
 {
-    gb.lock _gb.run \${@}
+    local help="\${FUNCNAME}:[guest image file][opt: bridge name][opt: nic][optional debug flag:1|0]"
+    gb.virtiofsd.config \${@:?\${help}} 
+    gb.lock _gb.run \${@:?\${help}}
 }
 _gb.run()
 {
-    local help="[guest image file][opt: bridge name][opt: nic][optional debug flag:1|0]"
-    local guestimg=\${1:?\${help}}
+    local guestimg=\${1}
     local guestname=\${guestimg##*/}
     guestname=\${guestname%.*}
     local guestcfg=${confdir}/\${guestname}
@@ -662,12 +728,18 @@ GBIOMMU
 }
 gb.socks()
 {
-    local help="[guest socket hostname][monitor cmds eg:info name/quit]"
+    local help="[hostname/socket file][monitor cmds eg:info name/quit]"
     local name=\${1:?\$help}
-    [[ -S ${socksdir}/\$name ]] || return
     \builtin shift
     local cmd=\${@:?[QEMU monitor commands eg: info name]}
-    $socat - UNIX-CONNECT:${socksdir}/\$name <<<"\${cmd}"
+#    set -o xtrace
+    [[ -S ${socksdir}/\$name ]] && {
+        $socat - UNIX-CONNECT:${socksdir}/\$name <<<"\${cmd}"
+        set +o xtrace
+        return
+    }
+    [[ -S \$name ]] && $socat - UNIX-CONNECT:\$name  <<<"\${cmd}"
+    set +o xtrace
 }
 
 gb.info()
@@ -952,11 +1024,12 @@ gb.perm()
     local ownership=\${2:?\$help}
     local dirperm=\${3:?\$help}
     local fileperm=\${4:?\$help}
+    [[ -d \${dir} ]] || return
     [[ \$($id -u) == 0 ]] || local cmd=$sudo
     \$cmd $find \$dir -type d -exec $chown \$ownership {} \;
-    \$cmd $find \$dir -type f -exec $chown \$ownership {} \;
+    \$cmd $find \$dir ! -type d -exec $chown \$ownership {} \;
     \$cmd $find \$dir -type d -exec $chmod \$dirperm {} \;
-    \$cmd $find \$dir -type f -exec $chmod \$fileperm {} \;
+    \$cmd $find \$dir ! -type d -exec $chmod \$fileperm {} \;
 }
 gb.bdf()
 {
