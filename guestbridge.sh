@@ -2,10 +2,10 @@ gb.substitute()
 {
     local seed confdir moddir guestbridgedir socksdir virtiofsdsocksdir vfiodir \
     blacklist bindir mandir ovmfdir cmd i cmdlist='sed shred perl dirname
-    basename cat ls cut bash man mktemp egrep env mv sudo
+    basename cat ls cut bash man mktemp grep egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss file
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock
-    lspci tee umount mount grub-mkconfig ethtool sleep modinfo
+    lspci tee umount mount grub-mkconfig ethtool sleep modinfo kill
     qemu-nbd lsusb realpath mkinitcpio parted less systemctl virtiofsd'
     declare -A Devlist=(
     )
@@ -67,10 +67,19 @@ gb.substitute()
 
 gb.virtiofsd.stop()
 {
-    ps.kill virtiofsd
-    declare -a Pid=(\$($sudo $ls ${virtiofsdsocksdir})) 
-    [[ -n \${Pid[0]} ]] || return
-    $sudo $rm -rf ${virtiofsdsocksdir}
+#    set -o xtrace
+    local pidfile i vmsocks="\$($ls ${socksdir})"
+    declare -a Virtfsdsocks=(\$($ls ${virtiofsdsocksdir})) 
+    [[ -n \${Virtfsdsocks[0]} ]] || return
+    for i in \${Virtfsdsocks[@]};do
+        $grep -q -w "\${i%%-@*}" <<<\$vmsocks && continue
+        pidfile="$virtiofsdsocksdir/.run.virtiofsd.\${i}.pid"
+        [[ -r "\$pidfile" ]] || continue
+        $sudo $kill -s SIGKILL \$(<\$pidfile) || continue 
+        $sudo $rm -f "${virtiofsdsocksdir}/\${i}"
+        $sudo $rm -f \${pidfile}
+    done
+    set +o xtrace
 }
 gb.virtiofsd.config()
 {
@@ -499,7 +508,8 @@ _gb.run()
     -e "s;GUESTIMG;\${guestimg};" \${guestcfg})) 
 
     if [[ \${#bridge} -gt 1 && \${#nic} -gt 1 ]];then
-        $egrep -q -m 1 "tap,"  <<<\${Config[@]} && gb.tap bridge nic guestname
+        $egrep -q -m 1 "tap,"  <<<\${Config[@]} && gb.tap bridge nic guestname ||\
+        { gb_guest_delocate; return; }
     fi
     gb.rebind2config \${guestcfg} 
     gb.perm /dev/vfio root:kvm g=rwx g=rw
@@ -521,7 +531,7 @@ KVMGUEST
 gb.tap()
 {
     ## 1,bridge 2,nic 3,guestname
-    gb.bridge.add "\${!1}" "\${!2}" || return
+    gb.bridge.add "\${!1}" "\${!2}" || return 1
     gb.tap.add "tap_\${!3}"
     gb.tap2bridge tap_\${!3} \${!1}
 }
