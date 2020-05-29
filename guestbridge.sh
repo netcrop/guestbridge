@@ -4,7 +4,7 @@ gb.substitute()
     blacklist bindir mandir ovmfdir cmd i cmdlist='sed shred perl dirname
     basename cat ls cut bash man mktemp grep egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss file
-    qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock
+    qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock groups
     lspci tee umount mount grub-mkconfig ethtool sleep modinfo kill
     qemu-nbd lsusb realpath mkinitcpio parted less systemctl virtiofsd'
     declare -A Devlist=(
@@ -65,6 +65,16 @@ gb.substitute()
     )
     \builtin \source <($cat<<-SUB
 
+gb.query.mac()
+{
+    local i nic=\${1:?[nic name]}
+    declare -a Ip=(\$($ip -o link show \${nic}))
+    for ((i=\${#Ip[@]} - 1; i > 0 ; i--));do
+        $egrep -q -w "permaddr|link/ether" <<<\${Ip[i]} || continue
+        echo \${Ip[((i + 1))]}
+        return
+    done
+}
 gb.virtiofsd.stop()
 {
 #    set -o xtrace
@@ -495,7 +505,7 @@ _gb.run()
         \builtin shopt -u extdebug
     }
     \${debug}
-    $id|$egrep -w kvm >/dev/null || return
+    $groups | $grep -q -w "kvm" || return
     [[ -f \${guestcfg} ]] || return
     [[ -a \${guestimg} ]] || return
     [[ -c $vfiodir/vfio ]] || return
@@ -503,7 +513,7 @@ _gb.run()
     local tmpfile=/var/tmp/\${RANDOM}
     declare -a Config=(\$($sed -e "s;^#.*\$;;g" \
     -e "s;GUESTNAME;\${guestname};g" \
-    -e "s;MAC;\$(gb.mac);g" \
+    -e "s;MAC;\$(gb.query.mac \${nic});g" \
     -e "s;PORT;\$((\${RANDOM}%100+9000));" \
     -e "s;GUESTIMG;\${guestimg};" \${guestcfg})) 
 
