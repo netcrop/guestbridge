@@ -93,21 +93,56 @@ gb.virtiofsd.stop()
 }
 gb.virtiofsd.config()
 {
+    local i guestname=\${1:?\${FUNCNAME}:[guest host name/imagefile/configfile]}
+    local socketname socketpath tmpfile tag
+    guestname=\${guestname##*/}
+    guestname=\${guestname%.*}
+    [[ -r ${confdir}/\${guestname} ]] || { set +o xtrace; return 1; }
+    declare -a Sharedir=(\$($egrep "virtiofsd" ${confdir}/\${guestname}|\
+    $sed "s;^.*virtiofsd/GUESTNAME-\(.*\).sock.*\$;\1;"))
+#    set -x
+    for i in \${Sharedir[@]};do
+        [[ -n "\$i" ]] || continue
+        socketname="\${guestname}-\${i}.sock"
+        socketpath="${virtiofsdsocksdir}\${socketname}"
+        [[ -S \${socketpath} ]] && continue
+        i=\${i//@//}
+        [[ -d \${i} ]] || continue
+        tmpfile=/var/tmp/${seed}
+        tag=\${i%/}
+        tag=\${tag##*/}
+        $cat <<-VIRTIOFSDSTART > \${tmpfile}
+#!$env $bash
+    \builtin exec $virtiofsd --syslog \
+    --socket-path="\${socketpath}" \
+    --thread-pool-size=6 \
+    -o source=\${i} &
+VIRTIOFSDSTART
+        $chmod u=rwx \${tmpfile}
+        $sudo \${tmpfile}
+        $rm -f \${tmpfile}
+        $sleep 4
+        gb.perm ${virtiofsdsocksdir} root:kvm g=rwx g=rw
+    done
+    set +x
+}
+_gb.virtiofsd.config()
+{
     local guestname=\${1:?\${FUNCNAME}:[guest host name/imagefile/configfile]}
 #    set -o xtrace
     guestname=\${guestname##*/}
     guestname=\${guestname%.*}
-    [[ -r ${confdir}/\${guestname} ]] || { set +o xtrace; return; }
+    [[ -r ${confdir}/\${guestname} ]] || { set +o xtrace; return 1; }
     local sharedir=\$($egrep "virtiofsd" ${confdir}/\${guestname}|$sed "s;^.*virtiofsd/GUESTNAME-\(.*\).sock.*\$;\1;")
-    [[ -n \${sharedir} ]] || { set +o xtrace; return; }
+    [[ -n \${sharedir} ]] || { set +o xtrace; return 1; }
     local socketname="\${guestname}-\${sharedir}.sock"
     local socketpath="${virtiofsdsocksdir}\${socketname}"
-    [[ -S \${socketpath} ]] && { set +o xtrace; return; }
+    [[ -S \${socketpath} ]] && { set +o xtrace; return 1; }
     sharedir=\${sharedir//@//}
     local tmpfile=/var/tmp/${seed}
     local tag=\${sharedir%/}
     tag=\${tag##*/}
-    [[ -d \$sharedir ]] || { set +o xtrace; return; }
+    [[ -d \$sharedir ]] || { set +o xtrace; return 1; }
     $cat <<-VIRTIOFSDSTART > \${tmpfile}
 #!$env $bash
     \builtin exec $virtiofsd --syslog \
@@ -481,7 +516,7 @@ GBIOMMU
 gb.run()
 {
     local help="\${FUNCNAME}:[guest image file][opt: bridge name][opt: nic][optional debug flag:1|0]"
-    gb.virtiofsd.config \${@:?\${help}} 
+    gb.virtiofsd.config \${@:?\${help}} || return 
     gb.lock _gb.run \${@:?\${help}}
 }
 _gb.run()
@@ -525,7 +560,7 @@ _gb.run()
     gb.perm /dev/vfio root:kvm g=rwx g=rw
     $cat<<KVMGUEST> \${tmpfile}
 #!$env $bash
-    \builtin exec $qemu_system_x86_64 -chroot /var/tmp/ -runas kvm \${Config[@]} && $touch /tmp/111 &
+    \builtin exec $qemu_system_x86_64 -chroot /var/tmp/ -runas kvm \${Config[@]} &
 #    \builtin exec $qemu_system_x86_64 \${Config[@]} &
 KVMGUEST
     $chown :kvm \${tmpfile}
