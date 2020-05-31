@@ -6,7 +6,8 @@ gb.substitute()
     cp chmod ln chown rm touch head mkdir id find ss file
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock groups
     lspci tee umount mount grub-mkconfig ethtool sleep modinfo kill
-    qemu-nbd lsusb realpath mkinitcpio parted less systemctl virtiofsd'
+    qemu-nbd lsusb realpath mkinitcpio parted less systemctl virtiofsd
+    gpasswd'
     declare -A Devlist=(
     )
     cmdlist="${Devlist[@]} $cmdlist"
@@ -24,12 +25,12 @@ gb.substitute()
     [[ -z $reslist ]] ||\
     { 
         \builtin printf "%s\n" \
-        "$FUNCNAME says: ( $reslist ) These Required Commands are missing."
+        "$FUNCNAME Require: $reslist"
         return
     }
     [[ -z $devlist ]] ||\
     \builtin printf "%s\n" \
-    "$FUNCNAME says: ( $devlist ) These Optional Commands for further development."
+    "$FUNCNAME Optional: $devlist"
 
     perl_version="$($perl -e 'print $^V')"
     confdir='/srv/kvm/conf/'
@@ -64,7 +65,18 @@ gb.substitute()
     vfio_pci
     )
     \builtin \source <($cat<<-SUB
-
+gb.pl()
+{
+    $sed -e "s;ENV;$env;" -e "s;PERL;$perl;" \
+    -e "s;VERSION;$perl_version;" src/gb.pl \
+    -e "s;GUESTBRIDGEDIR;$guestbridgedir;" -e "s;VFIODIR;$vfiodir;" \
+    -e "s;SOCKSDIR;$socksdir;" \
+    -e "s;SUDO;$sudo;" -e "s;GROUPS;$groups;" \
+    -e "s;GPASSWD;$gpasswd;" \
+    > ${bindir}/gb
+    $chmod u=rwx ${bindir}/gb
+    time ${bindir}/gb $guestbridgedir/arch.qcow2
+}
 gb.query.mac()
 {
     local i nic=\${1:?[nic name]}
@@ -121,41 +133,10 @@ VIRTIOFSDSTART
         $chmod u=rwx \${tmpfile}
         $sudo \${tmpfile}
         $rm -f \${tmpfile}
-        $sleep 4
         gb.perm ${virtiofsdsocksdir} root:kvm g=rwx g=rw
     done
+    $sleep 2
     set +x
-}
-_gb.virtiofsd.config()
-{
-    local guestname=\${1:?\${FUNCNAME}:[guest host name/imagefile/configfile]}
-#    set -o xtrace
-    guestname=\${guestname##*/}
-    guestname=\${guestname%.*}
-    [[ -r ${confdir}/\${guestname} ]] || { set +o xtrace; return 1; }
-    local sharedir=\$($egrep "virtiofsd" ${confdir}/\${guestname}|$sed "s;^.*virtiofsd/GUESTNAME-\(.*\).sock.*\$;\1;")
-    [[ -n \${sharedir} ]] || { set +o xtrace; return 1; }
-    local socketname="\${guestname}-\${sharedir}.sock"
-    local socketpath="${virtiofsdsocksdir}\${socketname}"
-    [[ -S \${socketpath} ]] && { set +o xtrace; return 1; }
-    sharedir=\${sharedir//@//}
-    local tmpfile=/var/tmp/${seed}
-    local tag=\${sharedir%/}
-    tag=\${tag##*/}
-    [[ -d \$sharedir ]] || { set +o xtrace; return 1; }
-    $cat <<-VIRTIOFSDSTART > \${tmpfile}
-#!$env $bash
-    \builtin exec $virtiofsd --syslog \
-    --socket-path="\${socketpath}" \
-    --thread-pool-size=6 \
-    -o source=\${sharedir} &
-VIRTIOFSDSTART
-    $chmod u=rwx \${tmpfile}
-    $sudo \${tmpfile}
-    $rm -f \${tmpfile}
-    $sleep 4
-    gb.perm ${virtiofsdsocksdir} root:kvm g=rwx g=rw
-    set +o xtrace
 }
 gb.powerdown()
 {
@@ -518,6 +499,35 @@ gb.run()
     local help="\${FUNCNAME}:[guest image file][opt: bridge name][opt: nic][optional debug flag:1|0]"
     gb.virtiofsd.config \${@:?\${help}} || return 
     gb.lock _gb.run \${@:?\${help}}
+}
+gb.prerun()
+{
+    local guestimg=\${1:?\${FUNCNAME}:[guest imagefile]}
+    guestname=\${guestimg##*/}
+    guestname=\${guestname%.*}
+    local guestcfg=${confdir}/\${guestname}
+    [[ -r \$guestcfg ]] || {
+        \builtin printf "Missing \$guestcfg.\n"
+        return 1
+    }
+    [[ -r \${guestimg} ]] || {
+        \builtin printf "Missing \$guestimg.\n"
+        return 1
+    }
+    [[ -c $vfiodir/vfio ]] || {
+        \builtin printf "Missing $vfiodir/vfio.\n"
+        return 1
+    }
+    [[ -S ${socksdir}/\${guestname} ]] && {
+       \builtin printf "${socksdir}/\${guestname} still in place.\n"
+        return 1
+    }
+    [[ \${UID} == 0 ]] || local permit=$sudo
+    $groups | $grep -q -w "kvm" || {
+        \$permit $gpasswd -a $USER kvm
+        \builtin printf "Pls logout and login again.\n"
+        return 1
+    }
 }
 _gb.run()
 {
