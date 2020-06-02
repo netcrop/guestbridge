@@ -44,7 +44,8 @@ gb.substitute()
     blacklist='/etc/modprobe.d/blacklist.conf'
     seed='${RANDOM}${RANDOM}'
     virtiofsdsocksdir='/run/virtiofsd/'
-    [[ -d  $ovmfdir ]] || \builtin \printf "%s\n" "${FUNCNAME}: $ovmfdir" 
+    [[ -d  $ovmfdir ]] ||\
+    \builtin \printf "%s\n" "${FUNCNAME}: Requre: $ovmfdir" 
     declare -a Mod=(
     virtio_balloon
     virtio_blk
@@ -73,6 +74,7 @@ gb.pl()
     -e "s;SOCKSDIR;$socksdir;" \
     -e "s;SUDO;$sudo;" -e "s;GROUPS;$groups;" \
     -e "s;GPASSWD;$gpasswd;" \
+    -e "s;IP;$ip;" \
     > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
     time ${bindir}/gb $guestbridgedir/arch.qcow2
@@ -111,7 +113,7 @@ gb.virtiofsd.config()
     guestname=\${guestname%.*}
     [[ -r ${confdir}/\${guestname} ]] || { set +o xtrace; return 1; }
     declare -a Sharedir=(\$($egrep "virtiofsd" ${confdir}/\${guestname}|\
-    $sed "s;^.*virtiofsd/GUESTNAME-\(.*\).sock.*\$;\1;"))
+    $sed "s;^.*virtiofsd/\${guestname}-\(.*\).sock.*\$;\1;"))
 #    set -x
     for i in \${Sharedir[@]};do
         [[ -n "\$i" ]] || continue
@@ -496,48 +498,20 @@ GBIOMMU
 }
 gb.run()
 {
-    local help="\${FUNCNAME}:[guest image file][opt: bridge name][opt: nic][optional debug flag:1|0]"
+    local help="\${FUNCNAME}:[guestimage file] [nicname] [optional debug flag:1|0]"
     gb.virtiofsd.config \${@:?\${help}} || return 
     gb.lock _gb.run \${@:?\${help}}
 }
-gb.prerun()
-{
-    local guestimg=\${1:?\${FUNCNAME}:[guest imagefile]}
-    guestname=\${guestimg##*/}
-    guestname=\${guestname%.*}
-    local guestcfg=${confdir}/\${guestname}
-    [[ -r \$guestcfg ]] || {
-        \builtin printf "Missing \$guestcfg.\n"
-        return 1
-    }
-    [[ -r \${guestimg} ]] || {
-        \builtin printf "Missing \$guestimg.\n"
-        return 1
-    }
-    [[ -c $vfiodir/vfio ]] || {
-        \builtin printf "Missing $vfiodir/vfio.\n"
-        return 1
-    }
-    [[ -S ${socksdir}/\${guestname} ]] && {
-       \builtin printf "${socksdir}/\${guestname} still in place.\n"
-        return 1
-    }
-    [[ \${UID} == 0 ]] || local permit=$sudo
-    $groups | $grep -q -w "kvm" || {
-        \$permit $gpasswd -a $USER kvm
-        \builtin printf "Pls logout and login again.\n"
-        return 1
-    }
-}
 _gb.run()
 {
-    local guestimg=\${1}
+    local guestimg=\${1:?[guestimage][nicname]}
     local guestname=\${guestimg##*/}
     guestname=\${guestname%.*}
     local guestcfg=${confdir}/\${guestname}
-    local bridge=\${2:-.}
-    local nic=\${3:-.}
-    local debug=\${4}
+    local nic=\${2:?[nicname]}
+    local bridge=\$(gb.query.mac \${nic})
+    bridge=\${bridge//:/}
+    local debug=\${3}
     \builtin shopt -s extdebug
     [[ "\${debug}" -eq 1 ]] && debug="set -o xtrace" || \builtin unset -v debug
     \builtin \trap "gb_guest_delocate" SIGHUP SIGTERM SIGINT
@@ -556,16 +530,8 @@ _gb.run()
     [[ -c $vfiodir/vfio ]] || return
     [[ -S ${socksdir}/\${guestname} ]] && return
     local tmpfile=/var/tmp/\${RANDOM}
-    declare -a Config=(\$($sed -e "s;^#.*\$;;g" \
-    -e "s;GUESTNAME;\${guestname};g" \
-    -e "s;MAC;\$(gb.query.mac \${nic});g" \
-    -e "s;PORT;\$((\${RANDOM}%100+9000));" \
-    -e "s;GUESTIMG;\${guestimg};" \${guestcfg})) 
-
-    if [[ \${#bridge} -gt 1 && \${#nic} -gt 1 ]];then
-        $egrep -q -m 1 "tap,"  <<<\${Config[@]} && gb.tap bridge nic guestname ||\
-        { gb_guest_delocate; return; }
-    fi
+    declare -a Config=(\$($sed -e "s;GUESTIMG;\${guestimg};" \${guestcfg})) 
+    gb.tap bridge nic guestname || { gb_guest_delocate; return; }
     gb.rebind2config \${guestcfg} 
     gb.perm /dev/vfio root:kvm g=rwx g=rw
     $cat<<KVMGUEST> \${tmpfile}
