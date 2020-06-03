@@ -69,13 +69,17 @@ gb.substitute()
 gb.pl()
 {
     $sed -e "s;ENV;$env;" -e "s;PERL;$perl;" \
-    -e "s;VERSION;$perl_version;" src/gb.pl \
+    -e "s;VERSION;$perl_version;" \
     -e "s;GUESTBRIDGEDIR;$guestbridgedir;" -e "s;VFIODIR;$vfiodir;" \
+    -e "s;VIRTIOFSDSOCKSDIR;$virtiofsdsocksdir;" \
     -e "s;SOCKSDIR;$socksdir;" \
     -e "s;SUDO;$sudo;" -e "s;GROUPS;$groups;" \
     -e "s;GPASSWD;$gpasswd;" \
     -e "s;IP;$ip;" \
-    > ${bindir}/gb
+    -e "s;^#[^\!].*\$;;g" \
+    -e "s;BASH;$bash;g" \
+    -e "s;VIRTIOFSD;$virtiofsd;g" \
+    src/gb.pl > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
     time ${bindir}/gb $guestbridgedir/arch.qcow2
 }

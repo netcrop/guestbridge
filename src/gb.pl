@@ -3,9 +3,9 @@ use VERSION;
 use strict;
 use warnings;
 use Data::Dumper;
-my ($guestimg,$gbdir,$vfiodir,$socksdir,$tmp,$user)
- = ( $ARGV[0],"GUESTBRIDGEDIR", "VFIODIR", "SOCKSDIR",undef,getlogin());
-my (@Permit,@Config,%Bridge,%Tap,%Nic,%Tmp,%Master) = ( (), (), (), (), (),(),());
+my ($guestimg,$gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir,$tmp,$user)
+ = ( $ARGV[0],"GUESTBRIDGEDIR", "VFIODIR","VIRTIOFSDSOCKSDIR", "SOCKSDIR",undef,getlogin());
+my (@Permit,@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path) = ((),(),(),(),(),(),(),());
 sub call {
     pipe(my ($rfh,$wfh)) or die "Cann't create pipe $!";
     my $pid = open(my $pipe,'-|') // die "Can't fork:$!";
@@ -38,18 +38,43 @@ if( not $user cmp getgrnam('kvm')){
 }
 open(INPUT, '<', $guestcfg) or die "can't open $guestcfg.";
 chomp(@Config = <INPUT>);
-# Requred bridges and taps
+###########################
+#     Parse config file
+###########################
+
 foreach(@Config){
+    %Tmp = ();
     foreach(split(/,/)){
+        # Every field of Config
         next if(not m;([^"' ]+)\s*=\s*["']{0,1}([^"' ]+)["']{0,1};);
         $Tmp{$1} = $2;
     }
-    defined($Tmp{mac}) || next;
-    defined($Tmp{netdev}) || next;
-    $Tap{$Tmp{netdev}} = $Tmp{mac};
-    $tmp = $Tmp{mac} =~ tr/://rd;
-    $Bridge{$tmp} = $Tmp{mac}; 
+    # Every Line of Config
+    if (defined($Tmp{mac}) && defined($Tmp{netdev})){
+        $Tap{$Tmp{netdev}} = $Tmp{mac};
+        $tmp = $Tmp{mac} =~ tr/://rd;
+        $Bridge{$tmp} = $Tmp{mac}; 
+        next;
+    }
+    if(defined($Tmp{path})){
+        $Tmp{path} =~ m;$guestname-(.+)\.sock;;
+        $Path{$1} = $1 =~ tr;@;\/;r;
+        next;
+    }
 }
+############################
+#        Virfiofs
+############################
+foreach(keys %Path){
+print <<EOF;
+#!ENV BASH
+    builtin exec VIRTIOFSD --syslog --socket-path="$virtiofsdsocksdir/$_.sock" \
+    --thread-pool-size=6 -o source=$Path{$_} &
+EOF
+}
+##############################
+#     Add taps and Bridges.
+##############################
 # All nic names
 foreach(call(qw( IP -o link show))){
     %Tmp = ();
@@ -81,7 +106,7 @@ foreach(keys %Bridge){
     call((@Permit,qw(IP link set), $tmp, qw(up)));
     call((@Permit,qw(IP link set), $tmp, qw(master), $_));
 }
-# Filter out exist taps
+# Filter out exist taps and bridge it.
 foreach(values %Nic){
     defined($Tap{$_}) || next;
     # Already has this tap and it's also bridged.
@@ -93,7 +118,7 @@ foreach(values %Nic){
     call((@Permit,qw(IP link set),$_ ,'master',$Tap{$_}));
     $Tap{$_} = undef;
 }
-# Add taps
+# Add new taps and bridge it.
 foreach(keys %Tap){
     defined($Tap{$_}) || next;
     call((@Permit,qw(IP tuntap add dev),$_,qw(mode tap user), $user));
@@ -101,15 +126,9 @@ foreach(keys %Tap){
     call((@Permit,qw(IP link set),$_ ,'master',$Tap{$_}));
     $Tap{$_} = undef;
 }
-=head
-# Filter out already bridged taps
-foreach(keys %Master){
-    defined($Tap{$_}) || next;
-    $Tap{$_} = undef;
-}
-=cut
 #print Dumper(\@Config);
 #print Dumper(\%Bridge);
 #print Dumper(\%Nic);
-print Dumper(\%Master);
-print Dumper(\%Tap);
+#print Dumper(\%Master);
+#print Dumper(\%Tap);
+print Dumper(\%Path);
