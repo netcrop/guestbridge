@@ -79,6 +79,7 @@ gb.pl()
     -e "s;^#[^\!].*\$;;g" \
     -e "s;BASH;$bash;g" \
     -e "s;VIRTIOFSD;$virtiofsd;g" \
+    -e "s;CHOWN;$chown;g" \
     src/gb.pl > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
     time ${bindir}/gb $guestbridgedir/arch.qcow2

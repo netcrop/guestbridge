@@ -3,8 +3,8 @@ use VERSION;
 use strict;
 use warnings;
 use Data::Dumper;
-my ($guestimg,$gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir,$tmp,$user)
- = ( $ARGV[0],"GUESTBRIDGEDIR", "VFIODIR","VIRTIOFSDSOCKSDIR", "SOCKSDIR",undef,getlogin());
+my ($guestimg,$gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir,$tmp,$user,$kvm)
+ = ( $ARGV[0],"GUESTBRIDGEDIR", "VFIODIR","SOCKSDIR","VIRTIOFSDSOCKSDIR", undef,getlogin(),getgrnam('kvm'));
 my (@Permit,@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path) = ((),(),(),(),(),(),(),());
 sub call {
     pipe(my ($rfh,$wfh)) or die "Cann't create pipe $!";
@@ -12,7 +12,7 @@ sub call {
     if(not $pid){
         # Child process.
         close($rfh);
-        CORE::system(@_) == 0 or die "@_: $!";
+        system(@_) == 0 or die "@_: $!";
         exit;
     }
     # Parent process.
@@ -28,11 +28,12 @@ s;.*\/;;;
 s;\..*;;;
 my $guestname = $_;
 my $guestcfg = "$gbdir/conf/$_";
+@Permit = qw(SUDO) unless $< == 0; 
 ( -r $guestcfg ) || die "Guest config: $guestcfg not avaliable.";
 ( -c "$vfiodir/vfio" ) || die "$vfiodir/vfio not avaliable.";
 ( -S "$socksdir/$guestname" ) && die "$socksdir/$guestname still in place.";
+#( -d $virtiofsdsocksdir ) || die "$virtiofsdsocksdir not avaliable.";
 # Array is requred for call function.
-@Permit = qw(SUDO) if ( $< != 0 ); 
 if( not $user cmp getgrnam('kvm')){
     die "Pls manually add UID: $< to group: kvm";
 }
@@ -66,12 +67,11 @@ foreach(@Config){
 #        Virfiofs
 ############################
 foreach(keys %Path){
-print <<EOF;
-#!ENV BASH
-    builtin exec VIRTIOFSD --syslog --socket-path="$virtiofsdsocksdir/$_.sock" \
-    --thread-pool-size=6 -o source=$Path{$_} &
-EOF
+    $tmp = "exec VIRTIOFSD --syslog --socket-path=$virtiofsdsocksdir$guestname-$_.sock --thread-pool-size=6 -o source=$Path{$_} &";
+    die "cann't call system:$?" if(system($tmp));
+#    call((@Permit,qw(CHOWN -R), "$user:$kvm", "$virtiofsdsocksdir")));
 }
+__END__
 ##############################
 #     Add taps and Bridges.
 ##############################
@@ -131,4 +131,4 @@ foreach(keys %Tap){
 #print Dumper(\%Nic);
 #print Dumper(\%Master);
 #print Dumper(\%Tap);
-print Dumper(\%Path);
+#print Dumper(\%Path);
