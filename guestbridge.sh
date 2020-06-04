@@ -80,6 +80,9 @@ gb.pl()
     -e "s;BASH;$bash;g" \
     -e "s;VIRTIOFSD;$virtiofsd;g" \
     -e "s;CHOWN;$chown;g" \
+    -e "s;CHMOD;$chmod;g" \
+    -e "s;QEMU;$qemu_system_x86_64;g" \
+    -e "s;MV;$mv;g" \
     src/gb.pl > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
     time ${bindir}/gb $guestbridgedir/arch.qcow2
