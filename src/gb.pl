@@ -162,11 +162,16 @@ chown($User[2],$Kvm[3],@_);
 if(not ($pid = fork)){
     # child
     die "cann't fork:$!" unless defined $pid;
-    $tmp = "QEMU -chroot /var/tmp/ -runas kvm @Config";
+    $tmp = "@Permit QEMU -chroot /var/tmp/ -runas kvm @Config";
     exec(split(/ /, $tmp)) or die "cann't exec: $!";
     # just in case child don't die.
     exit;
 }
+sleep 1;
+( -S "$socksdir/$guestname" ) || die "$socksdir/$guestname not yet created.";
+system((@Permit,'CHOWN',"$Kvm[0]:$Kvm[0]","$socksdir/$guestname"));
+system((@Permit,'CHMOD',"ug=rw","$socksdir/$guestname"));
+
 #print Dumper(\@Config);
 #print Dumper(\%Bridge);
 #print Dumper(\%Nic);
