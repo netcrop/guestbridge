@@ -3,8 +3,8 @@ use VERSION;
 use strict;
 use warnings;
 use Data::Dumper;
-my ($guestimg,$gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir,$tmp)
- = ( $ARGV[0],"GUESTBRIDGEDIR", "VFIODIR","SOCKSDIR","VIRTIOFSDSOCKSDIR", undef);
+my ($guestimg,$gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir,$tmp,$pid)
+ = ( $ARGV[0],"GUESTBRIDGEDIR", "VFIODIR","SOCKSDIR","VIRTIOFSDSOCKSDIR",undef,undef);
 my (@Permit,@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path,@Kvm,@User) = ((),(),(),(),(),(),(),(),(),());
 sub call {
     pipe(my ($rfh,$wfh)) or die "Cann't create pipe $!";
@@ -30,19 +30,29 @@ my $guestname = $_;
 my $guestcfg = "$gbdir/conf/$_";
 @Kvm = getpwnam('kvm');
 @User = getpwnam(getlogin());
+# Array is requred for call function.
+@Permit = qw(SUDO) unless $User[2] == 0;
+die "Pls add: $User[0] to group: $Kvm[0]" unless $User[2] != $Kvm[2];
+
 ( -r $guestcfg ) || die "Guest config: $guestcfg not avaliable.";
 ( -c "$vfiodir/vfio" ) || die "$vfiodir/vfio not avaliable.";
 ( -S "$socksdir/$guestname" ) && die "$socksdir/$guestname still in place.";
-#( -d $virtiofsdsocksdir ) || die "$virtiofsdsocksdir not avaliable.";
-# Array is requred for call function.
-@Permit = qw(SUDO) unless $User[2] == 0; 
-die "Pls add: $User[0] to group: $Kvm[0]" unless $User[2] != $Kvm[2];
-open(INPUT, '<', $guestcfg) or die "can't open $guestcfg.";
-chomp(@Config = <INPUT>);
+
+if( ! -d $virtiofsdsocksdir || ! -w $virtiofsdsocksdir || ! -x $virtiofsdsocksdir ){
+    $tmp = int(rand(99999)) + 10000;
+    $tmp = "/var/tmp/$tmp";
+    mkdir( $tmp,0770);
+    chmod( 0770, $tmp);
+    chown($User[2],$Kvm[3],$tmp);
+    system((@Permit,'mv',$tmp,$virtiofsdsocksdir));
+}
+
 ###########################
 #     Parse config file
 ###########################
 
+open(INPUT, '<', $guestcfg) or die "can't open $guestcfg.";
+chomp(@Config = <INPUT>);
 foreach(@Config){
     %Tmp = ();
     foreach(split(/,/)){
@@ -63,12 +73,17 @@ foreach(@Config){
         next;
     }
 }
+
 ############################
 #        Virfiofs
 ############################
 foreach(keys %Path){
-    $tmp = "exec VIRTIOFSD --syslog --socket-path=$virtiofsdsocksdir$guestname-$_.sock --thread-pool-size=6 -o source=$Path{$_} &";
-#    die "cann't call system:$?" if(system($tmp));
+    if( not ($pid = fork) ){
+        # child
+        die "cann't fork:$!" unless defined $pid;
+        $tmp = "VIRTIOFSD --syslog --socket-path=$virtiofsdsocksdir$guestname-$_.sock --thread-pool-size=6 -o source=$Path{$_}";
+        exec(split(/ /, $tmp)) or die "cann't exec: $!";
+    }
     @_ = glob("$virtiofsdsocksdir*");
     chmod( 0660, @_);
     chown($User[2],$Kvm[3],@_);
