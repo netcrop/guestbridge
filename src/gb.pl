@@ -3,9 +3,9 @@ use VERSION;
 use strict;
 use warnings;
 use Data::Dumper;
-my ($guestimg,$gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir,$tmp,$user,$kvm)
- = ( $ARGV[0],"GUESTBRIDGEDIR", "VFIODIR","SOCKSDIR","VIRTIOFSDSOCKSDIR", undef,getlogin(),getgrnam('kvm'));
-my (@Permit,@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path) = ((),(),(),(),(),(),(),());
+my ($guestimg,$gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir,$tmp)
+ = ( $ARGV[0],"GUESTBRIDGEDIR", "VFIODIR","SOCKSDIR","VIRTIOFSDSOCKSDIR", undef);
+my (@Permit,@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path,@Kvm,@User) = ((),(),(),(),(),(),(),(),(),());
 sub call {
     pipe(my ($rfh,$wfh)) or die "Cann't create pipe $!";
     my $pid = open(my $pipe,'-|') // die "Can't fork:$!";
@@ -28,15 +28,15 @@ s;.*\/;;;
 s;\..*;;;
 my $guestname = $_;
 my $guestcfg = "$gbdir/conf/$_";
-@Permit = qw(SUDO) unless $< == 0; 
+@Kvm = getpwnam('kvm');
+@User = getpwnam(getlogin());
 ( -r $guestcfg ) || die "Guest config: $guestcfg not avaliable.";
 ( -c "$vfiodir/vfio" ) || die "$vfiodir/vfio not avaliable.";
 ( -S "$socksdir/$guestname" ) && die "$socksdir/$guestname still in place.";
 #( -d $virtiofsdsocksdir ) || die "$virtiofsdsocksdir not avaliable.";
 # Array is requred for call function.
-if( not $user cmp getgrnam('kvm')){
-    die "Pls manually add UID: $< to group: kvm";
-}
+@Permit = qw(SUDO) unless $User[2] == 0; 
+die "Pls add: $User[0] to group: $Kvm[0]" unless $User[2] != $Kvm[2];
 open(INPUT, '<', $guestcfg) or die "can't open $guestcfg.";
 chomp(@Config = <INPUT>);
 ###########################
@@ -68,8 +68,10 @@ foreach(@Config){
 ############################
 foreach(keys %Path){
     $tmp = "exec VIRTIOFSD --syslog --socket-path=$virtiofsdsocksdir$guestname-$_.sock --thread-pool-size=6 -o source=$Path{$_} &";
-    die "cann't call system:$?" if(system($tmp));
-#    call((@Permit,qw(CHOWN -R), "$user:$kvm", "$virtiofsdsocksdir")));
+#    die "cann't call system:$?" if(system($tmp));
+    @_ = glob("$virtiofsdsocksdir*");
+    chmod( 0660, @_);
+    chown($User[2],$Kvm[3],@_);
 }
 __END__
 ##############################
