@@ -6,7 +6,7 @@ use POSIX qw(setsid setgid setuid);
 use Data::Dumper;
 my ($guestimg,$gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir,$tmp,$pid,$rootdir)
 = ($ARGV[0],"GUESTBRIDGEDIR", "VFIODIR","SOCKSDIR","VIRTIOFSDSOCKSDIR",undef,undef,'/');
-my ($permit,@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path,@Kvm,@User,%Wish)
+my ($permit,@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path,@Kvm,@User,%Wish,%Module,%Real)
 = ((),(),(),(),(),(),(),(),(),(),());
 sub call {
     pipe(my ($rfh,$wfh)) or die "Cann't create pipe $!";
@@ -47,7 +47,7 @@ sub daemon {
         exit;
     }
 }
-( -r $guestimg ) || die "Guest image: $guestimg not avaliable.";
+die "Guest image: $guestimg not avaliable." unless -r $guestimg;
 $_ = $guestimg;
 s;.*\/;;;
 s;\..*;;;
@@ -59,9 +59,9 @@ my $guestcfg = "$gbdir/conf/$_";
 $permit = qw(SUDO) unless $User[2] == 0;
 die "Pls add: $User[0] to group: $Kvm[0]" unless $User[2] != $Kvm[2];
 
-( -r $guestcfg ) || die "Guest config: $guestcfg not avaliable.";
-( -c "$vfiodir/vfio" ) || die "$vfiodir/vfio not avaliable.";
-( -S "$socksdir/$guestname" ) && die "$socksdir/$guestname still in place.";
+die "Guest config: $guestcfg not avaliable." unless -r $guestcfg; 
+die "$vfiodir/vfio not avaliable." unless -c "$vfiodir/vfio";
+die "$socksdir/$guestname still in place." if -S "$socksdir/$guestname";
 if( ! -w $vfiodir || ! -x $vfiodir ){
     run("$permit CHOWN :$Kvm[3] $vfiodir");
     run("$permit CHMOD 0775 $vfiodir");
@@ -118,10 +118,21 @@ foreach(@Config){
 foreach(split(/(?:\n){2}/, join("",call("LSPCI -vmk")))){
     %Tmp = ();
     foreach(split(/\n/)){
-        next if(not m;([^: ]+):\s*([^ ]+)\s*;);
-        $Tmp{$1} = $2; 
+        next unless ( m;([^: ]+):\s*([^ ]+)\s*; );
+        $Tmp{$1} = $2 unless defined $Tmp{$1}; 
+    }
+    next unless defined $Tmp{Device};
+    $Real{$Tmp{Device}} = $Tmp{Driver} if defined $Tmp{Driver};
+    $Module{$Tmp{Device}} = $Tmp{Module} if defined $Tmp{Module};
+}
+foreach(keys %Wish){
+    if( not defined $Real{$_}){
+#        run("$permit MODPROB $Wish{$_}");
+        next;
     }
 }
+print Dumper(\%Real);
+print Dumper(\%Module);
 __END__
 ############################
 #        Virfiofs
@@ -140,7 +151,7 @@ foreach(call("IP -o link show")){
     %Tmp = ();
     @_ = split(/\s/);
     foreach(my $i = 3; $i < scalar(@_); $i++){
-        next if(not $_[$i] =~ m;permaddr|link/ether|master;);
+        next unless ( $_[$i] =~ m;permaddr|link/ether|master;);
         $Tmp{$_[$i]} = $_[$i + 1];
     }
     $_[1] =~ tr/://d;

@@ -1,7 +1,7 @@
 gb.substitute()
 {
     local seed confdir moddir guestbridgedir socksdir virtiofsdsocksdir vfiodir \
-    blacklist bindir mandir ovmfdir cmd i cmdlist='sed shred perl dirname
+    blacklist bindir mandir ovmfdir cmd i pcidir cmdlist='sed shred perl dirname
     basename cat ls cut bash man mktemp grep egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss file
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock groups
@@ -44,6 +44,7 @@ gb.substitute()
     blacklist='/etc/modprobe.d/blacklist.conf'
     seed='${RANDOM}${RANDOM}'
     virtiofsdsocksdir='/run/virtiofsd/'
+    pcidir='/sys/bus/pci/drivers/'
     [[ -d  $ovmfdir ]] ||\
     \builtin \printf "%s\n" "${FUNCNAME}: Requre: $ovmfdir" 
     declare -a Mod=(
@@ -66,6 +67,63 @@ gb.substitute()
     vfio_pci
     )
     \builtin \source <($cat<<-SUB
+
+gb.unbind()
+{
+    local help='[bdf][unbind driver: ehci-pci/vfio-pci]'
+    local bdf=\${1:?\$help}
+    local unbind=\${2:?\$help}
+    bdf="0000:\${bdf}"
+    [[ \$($id -u) == 0 ]] || local permit=$sudo
+#    set -x
+    [[ -d "${pcidir}/\${unbind}/" ]] || unbind=\${unbind/_/-}
+    local unbindpath="${pcidir}/\${unbind}/unbind"
+    \$permit $chown $USER: \${unbindpath}
+    \builtin echo \${bdf} > \${unbindpath} 2>/dev/null
+    \$permit $chown root: \${unbindpath}
+    $lspci -k -s \${bdf}
+    set +x
+}
+gb.rebind()
+{
+    local help='[bdf][unbind driver: ehci-pci/vfio-pci][bind driver: ehci-pci/vfio-pci]'
+    local bdf=\${1:?\$help}
+    local unbind=\${2:?\$help}
+    local bind=\${3:?\$help}
+    bdf="0000:\${bdf}"
+    [[ \$($id -u) == 0 ]] || local permit=$sudo
+#    set -x
+    [[ -d "${pcidir}\${unbind}/" ]] || unbind=\${unbind/_/-}
+    [[ -d "${pcidir}\${bind}/" ]] || bind=\${bind/_/-}
+    local idpath="${pcidir}\${bind}/new_id"
+    local unbindpath="${pcidir}\${unbind}/unbind"
+    local bindpath="${pcidir}\${bind}/bind"
+    local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
+    \$permit $chown $USER: \${idpath} \${bindpath} \${unbindpath}
+    \builtin echo \${bdf} > \${unbindpath} 2>/dev/null
+    \builtin echo "\${id/:/ }" > \${idpath} 2>/dev/null
+    \builtin echo "\${bdf}" > \${bindpath} 2>/dev/null
+    \$permit $chown root: \${idpath} \${bindpath} \${unbindpath}
+    $lspci -s \${bdf} -k
+    set +x
+}
+gb.bind()
+{
+    local help='[bdf][bind driver: ehci-pci/vfio-pci]'
+    local bdf=\${1:?\$help}
+    local bind=\${2:?\$help}
+    bdf="0000:\${bdf}"
+    [[ \$($id -u) == 0 ]] || local permit=$sudo
+    [[ -d "${pcidir}\${bind}/" ]] || bind=\${bind/_/-}
+    local idpath="${pcidir}\${bind}/new_id"
+    local bindpath="${pcidir}/\${bind}/bind"
+    local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
+    \$permit $chown $USER: \${idpath} \${bindpath}
+    \builtin echo "\${id/:/ }" > \${idpath} 2>/dev/null
+    \builtin echo "\${bdf}" > \${bindpath} 2>/dev/null
+    \$permit $chown root: \${idpath} \${bindpath}
+    $lspci -s \${bdf} -k
+}
 gb.pl()
 {
     $sed -e "s;ENV;$env;" -e "s;PERL;$perl;" \
@@ -84,6 +142,7 @@ gb.pl()
     -e "s;QEMU;$qemu_system_x86_64;g" \
     -e "s;MV;$mv;g" \
     -e "s;LSPCI;$lspci;g" \
+    -e "s;MODPROB;$modprobe;g" \
     src/gb.pl > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
     time ${bindir}/gb $guestbridgedir/arch.qcow2
@@ -220,7 +279,7 @@ GBSWAPGPU
     declare -a Entry
     for i in \${Res[@]};do
         Entry=(\${i//@/ })
-        file="/sys/bus/pci/drivers/\${Entry[2]}/0000:\${Entry[0]}/boot_vga"
+        file="$pcidir/\${Entry[2]}/0000:\${Entry[0]}/boot_vga"
         [[ -r \${file} && "\$($cat \$file)" == 1 ]] && return
         gb.loadmod \${Entry[2]} 
         if [[ \${Entry[1]} =~ 'none' ]];then
@@ -230,65 +289,6 @@ GBSWAPGPU
         [[ \${Entry[1]} =~ \${Entry[2]} ]] && continue
         gb.rebind \${Entry[@]}
         return
-    done
-    set +o xtrace
-}
-_gb.swapgpu()
-{
-    local lspci="\$($lspci -vmk)"
-    [[ \$($id -u) == 0 ]] || local cmd=$sudo
-    declare -a Res=(\$($perl - "\${lspci}" <<'GBSWAPGPU' 
-use $perl_version;
-use warnings;
-use strict;
-#use Data::Dumper;
-my \$bdf='(?:[a-z0-9][a-z0-9]:[a-z0-9][a-z0-9].[a-z0-9])';
-my @Res = ('none','none','none');
-\$_ = \${ARGV[0]};
-foreach(split(/(?:\n){2}/)){
-    next if(!m;Class:\s*VGA\s+?;);
-    foreach(split(/\n/)){
-        if(m;Device:\s*(\$bdf)\$;){
-            \$Res[0] = "\$1";
-        }elsif(m;Driver:\s*([^\s]+)\$;){
-            \$Res[1] = "\$1"; 
-        }elsif(m;Module:\s*([^\s]+)\$;){
-            \$Res[2] = "\$1";
-        }
-    }
-    say join('@', @{Res});
-    @Res = ('none','none','none');
-}
-#say Dumper(\\@_);
-GBSWAPGPU
-))
-#    set -o xtrace
-    local i file driver device module
-    for i in \${Res[@]};do
-#        echo \$i
-        device=\${i%%@*}
-        i=\${i#*@}
-        driver=\${i%@*}
-        module=\${i#*@}
-        file="/sys/bus/pci/drivers/\${module}/0000:\${device}/boot_vga"
-        # Swap off
-        if [[ -r \${file} && "\$($cat \$file)" == 1 ]];then
-            if [[ \${driver} =~ 'none' ]];then
-                gb.bind \${device} vfio-pci
-                continue
-            fi
-            gb.rebind \${device} \${driver} vfio-pci
-            [[ \${driver} =~ \${module} ]] && gb.unloadmod \${module}
-            continue
-        fi
-        # Swap on 
-        gb.loadmod \${module} 
-        if [[ \${driver} =~ 'none' ]];then
-            gb.bind \${device} \${module}
-            continue
-        fi
-#        [[ \${driver} =~ \${module} ]] && continue
-        gb.rebind \${device} \${driver} \${module}
     done
     set +o xtrace
 }
@@ -1078,41 +1078,6 @@ gb.bdf()
     $egrep -w "bus-info:"|\
     $sed "s;bus-info: \(.*\);\1;"
 }
-gb.unbind()
-{
-    local help='[bdf][unbind driver: ehci-pci/vfio-pci]'
-    local bdf=\${1:?\$help}
-    local unbind=\${2:?\$help}
-    bdf="0000:\${bdf}"
-    [[ \$($id -u) == 0 ]] || local cmd=$sudo
-#    set -o xtrace
-    [[ -d "/sys/bus/pci/drivers/\${unbind}/" ]] || unbind=\${unbind/_/-}
-    local unbindpath="/sys/bus/pci/drivers/\${unbind}/unbind"
-    \builtin echo \${bdf} |\$cmd $tee \${unbindpath} 2>/dev/null
-    $lspci -k -s \${bdf}
- #   set +o xtrace
-}
-gb.rebind()
-{
-    local help='[bdf][unbind driver: ehci-pci/vfio-pci][bind driver: ehci-pci/vfio-pci]'
-    local bdf=\${1:?\$help}
-    local unbind=\${2:?\$help}
-    local bind=\${3:?\$help}
-    bdf="0000:\${bdf}"
-    [[ \$($id -u) == 0 ]] || local cmd=$sudo
-#    set -o xtrace
-    [[ -d "/sys/bus/pci/drivers/\${unbind}/" ]] || unbind=\${unbind/_/-}
-    [[ -d "/sys/bus/pci/drivers/\${bind}/" ]] || bind=\${bind/_/-}
-    local idpath="/sys/bus/pci/drivers/\${bind}/new_id"
-    local unbindpath="/sys/bus/pci/drivers/\${unbind}/unbind"
-    local bindpath="/sys/bus/pci/drivers/\${bind}/bind"
-    local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
-    \builtin echo \${bdf} |\$cmd $tee \${unbindpath} 2>/dev/null
-    \builtin echo "\${id/:/ }" |\$cmd $tee \${idpath} 2>/dev/null
-    \builtin echo "\${bdf}" |\$cmd $tee \${bindpath} 2>/dev/null
-    $lspci -s \${bdf} -k
- #   set +o xtrace
-}
 gb.bridge.add()
 {
   local name=\${1:?[bridge name][nic]}
@@ -1125,21 +1090,6 @@ gb.bridge.add()
   $sudo $ip link set \${nic} down
   $sudo $ip link set \${nic} up
   $sudo $ip link set \${nic} master \${name}
-}
-gb.bind()
-{
-    local help='[bdf][bind driver: ehci-pci/vfio-pci]'
-    local bdf=\${1:?\$help}
-    local bind=\${2:?\$help}
-    bdf="0000:\${bdf}"
-    [[ \$($id -u) == 0 ]] || local cmd=$sudo
-    [[ -d "/sys/bus/pci/drivers/\${bind}/" ]] || bind=\${bind/_/-}
-    local idpath="/sys/bus/pci/drivers/\${bind}/new_id"
-    local bindpath="/sys/bus/pci/drivers/\${bind}/bind"
-    local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
-    \builtin echo "\${id/:/ }" |\$cmd $tee \${idpath} 2>/dev/null
-    \builtin echo "\${bdf}" |\$cmd $tee \${bindpath} 2>/dev/null
-    $lspci -s \${bdf} -k
 }
 SUB
 )
