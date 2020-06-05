@@ -83,6 +83,7 @@ gb.pl()
     -e "s;CHMOD;$chmod;g" \
     -e "s;QEMU;$qemu_system_x86_64;g" \
     -e "s;MV;$mv;g" \
+    -e "s;LSPCI;$lspci;g" \
     src/gb.pl > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
     time ${bindir}/gb $guestbridgedir/arch.qcow2

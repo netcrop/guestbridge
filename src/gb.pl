@@ -2,18 +2,19 @@
 use VERSION;
 use strict;
 use warnings;
-use POSIX qw(setsid);
-#use Data::Dumper;
+use POSIX qw(setsid setgid setuid);
+use Data::Dumper;
 my ($guestimg,$gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir,$tmp,$pid,$rootdir)
 = ($ARGV[0],"GUESTBRIDGEDIR", "VFIODIR","SOCKSDIR","VIRTIOFSDSOCKSDIR",undef,undef,'/');
-my ($permit,@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path,@Kvm,@User) = ((),(),(),(),(),(),(),(),(),());
+my ($permit,@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path,@Kvm,@User,%Wish)
+= ((),(),(),(),(),(),(),(),(),(),());
 sub call {
     pipe(my ($rfh,$wfh)) or die "Cann't create pipe $!";
     my $pid = open(my $pipe,'-|') // die "Can't fork:$!";
     if(not $pid){
         # Child process.
         close($rfh);
-        system(@_) == 0 or die "@_: $!";
+        system(split(/ /,$_[0])) == 0 or die "$_[0]: $!";
         exit;
     }
     # Parent process.
@@ -33,6 +34,14 @@ sub daemon {
         die "cann't chdir to $rootdir: $!" unless chdir $rootdir;
         umask 0077;
         die "can't setsid" if setsid() < 0;
+        close STDIN;
+ #       close STDOUT;
+ #       close STDERR;
+        setgid $Kvm[3];
+        setuid $Kvm[2];
+        open(STDIN,"</dev/null");
+ #       open(STDOUT,"+>/dev/null");
+ #       open(STDERR,"+>/dev/null");
         exec(split(/ /, $_[0])) or die "$_[0]: $!";
         # just in case child don't die.
         exit;
@@ -72,12 +81,19 @@ if( ! -d $virtiofsdsocksdir || ! -w $virtiofsdsocksdir || ! -x $virtiofsdsocksdi
 
 open(INPUT, '<', $guestcfg) or die "can't open $guestcfg.";
 chomp(@Config = <INPUT>);
+close(INPUT);
 foreach(@Config){
     %Tmp = ();
     foreach(split(/,/)){
         # Every field
-        next if(not m;([^"' ]+)\s*=\s*["']{0,1}([^"' ]+)["']{0,1};);
-        $Tmp{$1} = $2;
+        if(m;([^"' ]+)\s*=\s*["']{0,1}([^"' ]+)["']{0,1};){
+            $Tmp{$1} = $2;
+            next;
+        }
+        if(m;([^"' ]+)\s*["']{0,1}([^"' ]+)["']{0,1};){
+            $Tmp{$1} = $2;
+            next;
+        }
     }
     # Every Line
     if (defined($Tmp{mac}) && defined($Tmp{netdev})){
@@ -91,8 +107,22 @@ foreach(@Config){
         $Path{$1} = $1 =~ tr;@;\/;r;
         next;
     }
+    if(defined($Tmp{-device}) && defined($Tmp{host})){
+        $Wish{$Tmp{host}} = $Tmp{-device};
+        next;
+    }
 }
-
+##################################
+#   Device setup
+##################################
+foreach(split(/(?:\n){2}/, join("",call("LSPCI -vmk")))){
+    %Tmp = ();
+    foreach(split(/\n/)){
+        next if(not m;([^: ]+):\s*([^ ]+)\s*;);
+        $Tmp{$1} = $2; 
+    }
+}
+__END__
 ############################
 #        Virfiofs
 ############################
@@ -102,12 +132,11 @@ foreach(keys %Path){
     daemon("VIRTIOFSD --syslog --socket-path=$virtiofsdsocksdir$guestname-$_.sock --thread-pool-size=6 -o source=$Path{$_}");
 }
 run("$permit CHMOD 0755 VIRTIOFSD");
-__END__
 ##############################
 #     Add taps and Bridges.
 ##############################
 # All nic names
-foreach(call(qw( IP -o link show))){
+foreach(call("IP -o link show")){
     %Tmp = ();
     @_ = split(/\s/);
     foreach(my $i = 3; $i < scalar(@_); $i++){
@@ -161,20 +190,13 @@ foreach(keys %Tap){
 }
 
 ##################################
-#   start vm
+#   Start vm
 ##################################
-if(not ($pid = fork)){
-    # child
-    die "cann't fork:$!" unless defined $pid;
-    die "cann't chdir to $rootdir: $!" unless chdir $rootdir;
-    umask 0077;
-    die "can't setsid" if setsid() < 0;
- 
-    $tmp = "$permit QEMU -chroot /var/tmp/ -runas kvm @Config";
-    exec(split(/ /, $tmp)) or die "cann't exec: $!";
-    # just in case child don't die.
-    exit;
-}
+
+run("$permit CHMOD 4755 QEMU");
+daemon("QEMU -chroot /var/tmp/ -runas kvm @Config");
+run("$permit CHMOD 0755 QEMU");
+
 #######################################
 # Wait until virtiofsd created sockets.
 # It's time to change permission.
@@ -195,4 +217,5 @@ run("$permit CHMOD ug=rw $socksdir/$guestname");
 #print Dumper(\%Master);
 #print Dumper(\%Tap);
 #print Dumper(\%Path);
+#print Dumper(\%Wish);
 #__END__
