@@ -100,14 +100,14 @@ gb.query.mac()
 gb.virtiofsd.stop()
 {
 #    set -o xtrace
-    local pidfile i vmsocks="\$($ls ${socksdir})"
-    declare -a Virtfsdsocks=(\$($ls ${virtiofsdsocksdir})) 
+    local pidfile i vmsocks="\$($sudo $ls ${socksdir})"
+    declare -a Virtfsdsocks=(\$($sudo $ls ${virtiofsdsocksdir})) 
     [[ -n \${Virtfsdsocks[0]} ]] || return
     for i in \${Virtfsdsocks[@]};do
         $grep -q -w "\${i%%-@*}" <<<\$vmsocks && continue
         pidfile="$virtiofsdsocksdir/.run.virtiofsd.\${i}.pid"
-        [[ -r "\$pidfile" ]] || continue
-        $sudo $kill -s SIGKILL \$(<\$pidfile) || continue 
+        $sudo test -r "\$pidfile" || continue
+        $sudo $kill -s SIGKILL \$($sudo $cat \$pidfile) || continue 
         $sudo $rm -f "${virtiofsdsocksdir}/\${i}"
         $sudo $rm -f \${pidfile}
     done
