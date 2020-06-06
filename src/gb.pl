@@ -14,7 +14,7 @@ my @Kvm = getpwnam('kvm');
 my $user = getlogin();
 my @User = getpwnam($user);
 my @permit = ();
-@permit = qw(SUDO) unless $User[2] != 0;
+@permit = qw(SUDO) unless $User[2] == 0;
 sub call {
     pipe(my ($rfh,$wfh)) or die "Cann't create pipe $!";
     my $pid = open(my $pipe,'-|') // die "Can't fork:$!";
@@ -55,7 +55,7 @@ sub daemon {
     }
 }
 sub gb_bind {
-    die "Requre 2 args:" if scalar(@_) < 2;
+    die "[bdf][bind driver: vfio-pci]" if scalar(@_) < 2;
     die "invalid bdf:" unless $_[0] =~ $bdfpattern;
     my $bdf = "0000:$_[0]";
     my $bind = $_[1];
@@ -66,9 +66,53 @@ sub gb_bind {
     my @id = split(/ /,$_[0]);
     $id[2] =~ tr/:/ /;
     run("@permit $chown $user: $idpath $bindpath");
+    open(my $fh, '>', $idpath) or die "can't open $idpath";
+    print $fh $id[2];
+    close $fh;
+    open($fh, '>', $bindpath) or die "can't open $bindpath";
+    print $fh $bdf;
+    close $fh;
+    run("@permit $chown root: $idpath $bindpath");
 }
-gb_bind(qw(04:00.0 vfio_pci));
-__END__
+sub gb_unbind {
+    die "Requre 2 args:" if scalar(@_) < 2;
+    die "invalid bdf:" unless $_[0] =~ $bdfpattern;
+    my $bdf = "0000:$_[0]";
+    my $unbind = $_[1];
+    $unbind =~ tr/_/-/ unless -d "${pcidir}/${unbind}";
+    my $unbindpath = "$pcidir/$unbind/unbind";
+    run("@permit $chown $user: $unbindpath");
+    open(my $fh, '>', $unbindpath) or die "can't open $unbindpath";
+    print $fh $bdf;
+    close $fh;
+    run("@permit $chown root: $unbindpath");
+}
+sub gb_rebind {
+    die "[bdf][unbind driver: ehci-pci/vfio-pci][bind driver:]" if scalar(@_) < 3;
+    die "invalid bdf:" unless $_[0] =~ $bdfpattern;
+    my $bdf = "0000:$_[0]";
+    my $unbind = $_[1];
+    my $bind = $_[2];
+    $bind =~ tr/_/-/ unless -d "${pcidir}/${bind}";
+    $unbind =~ tr/_/-/ unless -d "${pcidir}/${unbind}";
+    my $unbindpath = "$pcidir/$unbind/unbind";
+    my $idpath = "$pcidir/$bind/new_id";
+    my $bindpath = "$pcidir/$bind/bind";
+    @_ = call("LSPCI -s $bdf -n");
+    my @id = split(/ /,$_[0]);
+    $id[2] =~ tr/:/ /;
+    run("@permit $chown $user: $idpath $bindpath $unbindpath");
+    open(my $fh, '>', $unbindpath) or die "can't open $unbindpath";
+    print $fh $bdf;
+    close $fh;
+    open( $fh, '>', $idpath) or die "can't open $idpath";
+    print $fh $id[2];
+    close $fh;
+    open($fh, '>', $bindpath) or die "can't open $bindpath";
+    print $fh $bdf;
+    close $fh;
+    run("@permit $chown root: $idpath $bindpath $unbindpath");
+}
 die "Guest image: $guestimg not avaliable." unless -r $guestimg;
 $_ = $guestimg;
 s;.*\/;;;
@@ -82,8 +126,8 @@ die "Guest config: $guestcfg not avaliable." unless -r $guestcfg;
 die "$vfiodir/vfio not avaliable." unless -c "$vfiodir/vfio";
 die "$socksdir/$guestname still in place." if -S "$socksdir/$guestname";
 if( ! -w $vfiodir || ! -x $vfiodir ){
-    run("@permit CHOWN :$Kvm[3] $vfiodir");
-    run("@permit CHMOD 0775 $vfiodir");
+    run("@permit $chown :$Kvm[3] $vfiodir");
+    run("@permit $chmod 0775 $vfiodir");
 }
 if( ! -d $virtiofsdsocksdir || ! -w $virtiofsdsocksdir || ! -x $virtiofsdsocksdir ){
     $tmp = int(rand(99999)) + 10000;
@@ -93,7 +137,6 @@ if( ! -d $virtiofsdsocksdir || ! -w $virtiofsdsocksdir || ! -x $virtiofsdsocksdi
     chown($User[2],$Kvm[3],$tmp);
     run("@permit MV $tmp $virtiofsdsocksdir");
 }
-
 ###########################
 #     Parse config file
 ###########################
@@ -144,22 +187,29 @@ foreach(split(/(?:\n){2}/, join("",call("LSPCI -vmk")))){
     $Real{$Tmp{Device}} = $Tmp{Driver} if defined $Tmp{Driver};
     $Module{$Tmp{Device}} = $Tmp{Module} if defined $Tmp{Module};
 }
-foreach(my ($key, $value) = each %Wish){
+while(my ($key, $value) = each %Wish){
     if( not defined $Real{$key}){
         $value =~ tr/-/_/;
         run("@permit MODPROB ${value}");
-        say $value;
+        gb_bind( $key, ${value});
         next;
     }
+    next if $value eq $Real{$key};
+    if ($Real{$key} =~ "amdgpu|nouveau"){
+        gb_rebind($key, $Real{$key}, $value);
+        run("@permit MODPROB --remove ${value}");
+        next;
+    }
+    gb_rebind($key, $Real{$key}, $value);
 }
+#print Dumper(\%Wish);
 #print Dumper(\%Real);
 #print Dumper(\%Module);
-#__END__
 ############################
 #        Virfiofs
 ############################
 run("@permit CHMOD 4755 VIRTIOFSD");
-foreach(my ($key,$value) = each %Path){
+while(my ($key,$value) = each %Path){
     next if( -S "$virtiofsdsocksdir$guestname-${key}.sock" );
     daemon("VIRTIOFSD --syslog --socket-path=$virtiofsdsocksdir$guestname-${key}.sock --thread-pool-size=6 -o source=${value}");
 }
@@ -187,7 +237,7 @@ foreach(values %Nic){
     $Bridge{$_} = undef;
 }
 # Create bridges that are not already in place.
-foreach(my ($key,$value) = each %Bridge){
+while(my ($key,$value) = each %Bridge){
     defined $value || next;
     # Bridge Name
     $tmp = $Nic{$value};
@@ -212,7 +262,7 @@ foreach(values %Nic){
     $Tap{$_} = undef;
 }
 # Add new taps and bridge it.
-foreach(my ($key,$value) = each %Tap){
+while(my ($key,$value) = each %Tap){
     defined $value || next;
     run("@permit IP tuntap add dev $key mode tap user $User[0]");
     run("@permit IP link set dev $key up");
@@ -249,5 +299,4 @@ run("@permit CHMOD ug=rw $socksdir/$guestname");
 #print Dumper(\%Master);
 #print Dumper(\%Tap);
 #print Dumper(\%Path);
-#print Dumper(\%Wish);
 #__END__
