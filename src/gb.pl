@@ -4,24 +4,34 @@ use strict;
 use warnings;
 use POSIX qw(setsid setgid setuid);
 use Data::Dumper;
+
+die "[guestimage file]:$!" unless defined $ARGV[0] && -r $ARGV[0];
 my ($guestimg,$gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir,$tmp,$pid,$rootdir)
 = ($ARGV[0],"GUESTBRIDGEDIR", "VFIODIR","SOCKSDIR","VIRTIOFSDSOCKSDIR",undef,undef,'/');
 my (@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path,%Wish,%Module,%Real)
 = ((),(),(),(),(),(),(),());
 my ($pcidir,$chown,$chmod) = qw(PCIDIR CHOWN CHOMD);
-my $bdfpattern = '\d\d\:\d\d\.\d';
+my $bdfpattern = '..\:..\..';
 my @Kvm = getpwnam('kvm');
 my $user = getlogin();
 my @User = getpwnam($user);
 my @permit = ();
 @permit = qw(SUDO) unless $User[2] == 0;
+sub clean {
+    say;
+}
+sub delocate {
+    clean();
+    die @_;
+}
+
 sub call {
-    pipe(my ($rfh,$wfh)) or die "Cann't create pipe $!";
-    my $pid = open(my $pipe,'-|') // die "Can't fork:$!";
+    pipe(my ($rfh,$wfh)) or delocate "Cann't create pipe $!";
+    my $pid = open(my $pipe,'-|') // delocate "Can't fork:$!";
     if(not $pid){
         # Child process.
         close($rfh);
-        system(split(/ /,$_[0])) == 0 or die "$_[0]: $!";
+        system(split(/ /,$_[0])) == 0 or delocate "$_[0]: $!";
         exit;
     }
     # Parent process.
@@ -32,15 +42,15 @@ sub call {
     return @_;
 }
 sub run {
-    CORE::system(split(/ /, $_[0])) == 0 or die "$_[0]: $!";
+    CORE::system(split(/ /, $_[0])) == 0 or delocate "$_[0]: $!";
 }
 sub daemon {
     if(not ($pid = fork)){
         # child
-        die "cann't fork:$!" unless defined $pid;
-        die "cann't chdir to $rootdir: $!" unless chdir $rootdir;
+        delocate "cann't fork:$!" unless defined $pid;
+        delocate "cann't chdir to $rootdir: $!" unless chdir $rootdir;
         umask 0077;
-        die "can't setsid" if setsid() < 0;
+        delocate "can't setsid" if setsid() < 0;
         close STDIN;
  #       close STDOUT;
  #       close STDERR;
@@ -49,14 +59,14 @@ sub daemon {
         open(STDIN,"</dev/null");
  #       open(STDOUT,"+>/dev/null");
  #       open(STDERR,"+>/dev/null");
-        exec(split(/ /, $_[0])) or die "$_[0]: $!";
-        # just in case child don't die.
+        exec(split(/ /, $_[0])) or delocate "$_[0]: $!";
+        # just in case child don't delocate.
         exit;
     }
 }
 sub gb_bind {
-    die "[bdf][bind driver: vfio-pci]" if scalar(@_) < 2;
-    die "invalid bdf:" unless $_[0] =~ $bdfpattern;
+    delocate "[bdf][bind driver: vfio-pci]" if scalar(@_) < 2;
+    delocate "invalid bdf:" unless $_[0] =~ $bdfpattern;
     my $bdf = "0000:$_[0]";
     my $bind = $_[1];
     $bind =~ tr/_/-/ unless -d "${pcidir}/${bind}";
@@ -66,30 +76,30 @@ sub gb_bind {
     my @id = split(/ /,$_[0]);
     $id[2] =~ tr/:/ /;
     run("@permit $chown $user: $idpath $bindpath");
-    open(my $fh, '>', $idpath) or die "can't open $idpath";
+    open(my $fh, '>', $idpath) or delocate "can't open $idpath";
     print $fh $id[2];
     close $fh;
-    open($fh, '>', $bindpath) or die "can't open $bindpath";
+    open($fh, '>', $bindpath) or delocate "can't open $bindpath";
     print $fh $bdf;
     close $fh;
     run("@permit $chown root: $idpath $bindpath");
 }
 sub gb_unbind {
-    die "Requre 2 args:" if scalar(@_) < 2;
-    die "invalid bdf:" unless $_[0] =~ $bdfpattern;
+    delocate "Requre 2 args:" if scalar(@_) < 2;
+    delocate "invalid bdf:" unless $_[0] =~ $bdfpattern;
     my $bdf = "0000:$_[0]";
     my $unbind = $_[1];
     $unbind =~ tr/_/-/ unless -d "${pcidir}/${unbind}";
     my $unbindpath = "$pcidir/$unbind/unbind";
     run("@permit $chown $user: $unbindpath");
-    open(my $fh, '>', $unbindpath) or die "can't open $unbindpath";
+    open(my $fh, '>', $unbindpath) or delocate "can't open $unbindpath";
     print $fh $bdf;
     close $fh;
     run("@permit $chown root: $unbindpath");
 }
 sub gb_rebind {
-    die "[bdf][unbind driver: ehci-pci/vfio-pci][bind driver:]" if scalar(@_) < 3;
-    die "invalid bdf:" unless $_[0] =~ $bdfpattern;
+    delocate "[bdf][unbind driver: ehci-pci/vfio-pci][bind driver:]" if scalar(@_) < 3;
+    delocate "invalid bdf:$_[0]" unless $_[0] =~ $bdfpattern;
     my $bdf = "0000:$_[0]";
     my $unbind = $_[1];
     my $bind = $_[2];
@@ -102,29 +112,28 @@ sub gb_rebind {
     my @id = split(/ /,$_[0]);
     $id[2] =~ tr/:/ /;
     run("@permit $chown $user: $idpath $bindpath $unbindpath");
-    open(my $fh, '>', $unbindpath) or die "can't open $unbindpath";
+    open(my $fh, '>', $unbindpath) or delocate "can't open $unbindpath";
     print $fh $bdf;
     close $fh;
-    open( $fh, '>', $idpath) or die "can't open $idpath";
+    open( $fh, '>', $idpath) or delocate "can't open $idpath";
     print $fh $id[2];
     close $fh;
-    open($fh, '>', $bindpath) or die "can't open $bindpath";
+    open($fh, '>', $bindpath) or delocate "can't open $bindpath";
     print $fh $bdf;
     close $fh;
     run("@permit $chown root: $idpath $bindpath $unbindpath");
 }
-die "Guest image: $guestimg not avaliable." unless -r $guestimg;
 $_ = $guestimg;
 s;.*\/;;;
 s;\..*;;;
 my $guestname = $_;
 my $guestcfg = "$gbdir/conf/$_";
 
-die "Pls add: $User[0] to group: $Kvm[0]" unless $User[2] != $Kvm[2];
+delocate "Pls add: $User[0] to group: $Kvm[0]" unless $User[2] != $Kvm[2];
 
-die "Guest config: $guestcfg not avaliable." unless -r $guestcfg; 
-die "$vfiodir/vfio not avaliable." unless -c "$vfiodir/vfio";
-die "$socksdir/$guestname still in place." if -S "$socksdir/$guestname";
+delocate "Guest config: $guestcfg not avaliable." unless -r $guestcfg; 
+delocate "$vfiodir/vfio not avaliable." unless -c "$vfiodir/vfio";
+delocate "$socksdir/$guestname still in place." if -S "$socksdir/$guestname";
 if( ! -w $vfiodir || ! -x $vfiodir ){
     run("@permit $chown :$Kvm[3] $vfiodir");
     run("@permit $chmod 0775 $vfiodir");
@@ -141,7 +150,7 @@ if( ! -d $virtiofsdsocksdir || ! -w $virtiofsdsocksdir || ! -x $virtiofsdsocksdi
 #     Parse config file
 ###########################
 
-open(INPUT, '<', $guestcfg) or die "can't open $guestcfg.";
+open(INPUT, '<', $guestcfg) or delocate "can't open $guestcfg.";
 chomp(@Config = <INPUT>);
 close(INPUT);
 foreach(@Config){
@@ -170,7 +179,7 @@ foreach(@Config){
         next;
     }
     if(defined($Tmp{-device}) && defined($Tmp{host})){
-        $Wish{$Tmp{host}} = $Tmp{-device};
+        $Wish{$Tmp{host}} = $Tmp{-device} if $Tmp{host} =~ $bdfpattern;
         next;
     }
 }
@@ -194,15 +203,19 @@ while(my ($key, $value) = each %Wish){
         gb_bind( $key, ${value});
         next;
     }
+
     next if $value eq $Real{$key};
+
     if ($Real{$key} =~ "amdgpu|nouveau"){
         gb_rebind($key, $Real{$key}, $value);
-        run("@permit MODPROB --remove ${value}");
+        run("@permit MODPROB --remove $Real{$key}");
         next;
     }
+
     gb_rebind($key, $Real{$key}, $value);
 }
-#print Dumper(\%Wish);
+__END__
+print Dumper(\%Wish);
 #print Dumper(\%Real);
 #print Dumper(\%Module);
 ############################
@@ -271,6 +284,7 @@ while(my ($key,$value) = each %Tap){
     $value = undef;
 }
 
+#print Dumper(\@Config);
 ##################################
 #   Start vm
 ##################################
@@ -289,11 +303,10 @@ run("@permit CHOWN :$Kvm[0] @_");
 run("@permit CHMOD g=rw @_");
 
 sleep 1;
-( -S "$socksdir/$guestname" ) || die "$socksdir/$guestname not yet created.";
+( -S "$socksdir/$guestname" ) || delocate "$socksdir/$guestname not yet created.";
 run("@permit CHOWN $Kvm[0]:$Kvm[0] $socksdir/$guestname");
 run("@permit CHMOD ug=rw $socksdir/$guestname");
 
-#print Dumper(\@Config);
 #print Dumper(\%Bridge);
 #print Dumper(\%Nic);
 #print Dumper(\%Master);

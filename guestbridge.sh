@@ -1,7 +1,8 @@
 gb.substitute()
 {
     local seed confdir moddir guestbridgedir socksdir virtiofsdsocksdir vfiodir \
-    blacklist bindir mandir ovmfdir cmd i pcidir cmdlist='sed shred perl dirname
+    blacklist bindir mandir ovmfdir cmd i pcidir \
+    cmdlist='sed shred perl dirname
     basename cat ls cut bash man mktemp grep egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss file
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock groups
@@ -124,7 +125,7 @@ gb.bind()
     \$permit $chown root: \${idpath} \${bindpath}
     $lspci -s \${bdf} -k
 }
-gb.pl()
+gb.pl.install()
 {
     $sed -e "s;ENV;$env;" -e "s;PERL;$perl;" \
     -e "s;VERSION;$perl_version;" \
@@ -146,7 +147,6 @@ gb.pl()
     -e "s;PCIDIR;$pcidir;g" \
     src/gb.pl > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
-    time ${bindir}/gb $guestbridgedir/arch.qcow2
 }
 gb.query.mac()
 {
