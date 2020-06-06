@@ -143,6 +143,7 @@ gb.pl()
     -e "s;MV;$mv;g" \
     -e "s;LSPCI;$lspci;g" \
     -e "s;MODPROB;$modprobe;g" \
+    -e "s;PCIDIR;$pcidir;g" \
     src/gb.pl > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
     time ${bindir}/gb $guestbridgedir/arch.qcow2

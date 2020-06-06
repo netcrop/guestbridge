@@ -6,8 +6,15 @@ use POSIX qw(setsid setgid setuid);
 use Data::Dumper;
 my ($guestimg,$gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir,$tmp,$pid,$rootdir)
 = ($ARGV[0],"GUESTBRIDGEDIR", "VFIODIR","SOCKSDIR","VIRTIOFSDSOCKSDIR",undef,undef,'/');
-my ($permit,@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path,@Kvm,@User,%Wish,%Module,%Real)
-= ((),(),(),(),(),(),(),(),(),(),());
+my (@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path,%Wish,%Module,%Real)
+= ((),(),(),(),(),(),(),());
+my ($pcidir,$chown,$chmod) = qw(PCIDIR CHOWN CHOMD);
+my $bdfpattern = '\d\d\:\d\d\.\d';
+my @Kvm = getpwnam('kvm');
+my $user = getlogin();
+my @User = getpwnam($user);
+my @permit = ();
+@permit = qw(SUDO) unless $User[2] != 0;
 sub call {
     pipe(my ($rfh,$wfh)) or die "Cann't create pipe $!";
     my $pid = open(my $pipe,'-|') // die "Can't fork:$!";
@@ -47,24 +54,36 @@ sub daemon {
         exit;
     }
 }
+sub gb_bind {
+    die "Requre 2 args:" if scalar(@_) < 2;
+    die "invalid bdf:" unless $_[0] =~ $bdfpattern;
+    my $bdf = "0000:$_[0]";
+    my $bind = $_[1];
+    $bind =~ tr/_/-/ unless -d "${pcidir}/${bind}";
+    my $idpath = "$pcidir/$bind/new_id";
+    my $bindpath = "$pcidir/$bind/bind";
+    @_ = call("LSPCI -s $bdf -n");
+    my @id = split(/ /,$_[0]);
+    $id[2] =~ tr/:/ /;
+    run("@permit $chown $user: $idpath $bindpath");
+}
+gb_bind(qw(04:00.0 vfio_pci));
+__END__
 die "Guest image: $guestimg not avaliable." unless -r $guestimg;
 $_ = $guestimg;
 s;.*\/;;;
 s;\..*;;;
 my $guestname = $_;
 my $guestcfg = "$gbdir/conf/$_";
-@Kvm = getpwnam('kvm');
-@User = getpwnam(getlogin());
-# Array is requred for call function.
-$permit = qw(SUDO) unless $User[2] == 0;
+
 die "Pls add: $User[0] to group: $Kvm[0]" unless $User[2] != $Kvm[2];
 
 die "Guest config: $guestcfg not avaliable." unless -r $guestcfg; 
 die "$vfiodir/vfio not avaliable." unless -c "$vfiodir/vfio";
 die "$socksdir/$guestname still in place." if -S "$socksdir/$guestname";
 if( ! -w $vfiodir || ! -x $vfiodir ){
-    run("$permit CHOWN :$Kvm[3] $vfiodir");
-    run("$permit CHMOD 0775 $vfiodir");
+    run("@permit CHOWN :$Kvm[3] $vfiodir");
+    run("@permit CHMOD 0775 $vfiodir");
 }
 if( ! -d $virtiofsdsocksdir || ! -w $virtiofsdsocksdir || ! -x $virtiofsdsocksdir ){
     $tmp = int(rand(99999)) + 10000;
@@ -72,7 +91,7 @@ if( ! -d $virtiofsdsocksdir || ! -w $virtiofsdsocksdir || ! -x $virtiofsdsocksdi
     mkdir( $tmp,0770);
     chmod( 0770, $tmp);
     chown($User[2],$Kvm[3],$tmp);
-    run("$permit MV $tmp $virtiofsdsocksdir");
+    run("@permit MV $tmp $virtiofsdsocksdir");
 }
 
 ###########################
@@ -125,24 +144,26 @@ foreach(split(/(?:\n){2}/, join("",call("LSPCI -vmk")))){
     $Real{$Tmp{Device}} = $Tmp{Driver} if defined $Tmp{Driver};
     $Module{$Tmp{Device}} = $Tmp{Module} if defined $Tmp{Module};
 }
-foreach(keys %Wish){
-    if( not defined $Real{$_}){
-#        run("$permit MODPROB $Wish{$_}");
+foreach(my ($key, $value) = each %Wish){
+    if( not defined $Real{$key}){
+        $value =~ tr/-/_/;
+        run("@permit MODPROB ${value}");
+        say $value;
         next;
     }
 }
-print Dumper(\%Real);
-print Dumper(\%Module);
-__END__
+#print Dumper(\%Real);
+#print Dumper(\%Module);
+#__END__
 ############################
 #        Virfiofs
 ############################
-run("$permit CHMOD 4755 VIRTIOFSD");
-foreach(keys %Path){
-    next if( -S "$virtiofsdsocksdir$guestname-$_.sock" );
-    daemon("VIRTIOFSD --syslog --socket-path=$virtiofsdsocksdir$guestname-$_.sock --thread-pool-size=6 -o source=$Path{$_}");
+run("@permit CHMOD 4755 VIRTIOFSD");
+foreach(my ($key,$value) = each %Path){
+    next if( -S "$virtiofsdsocksdir$guestname-${key}.sock" );
+    daemon("VIRTIOFSD --syslog --socket-path=$virtiofsdsocksdir$guestname-${key}.sock --thread-pool-size=6 -o source=${value}");
 }
-run("$permit CHMOD 0755 VIRTIOFSD");
+run("@permit CHMOD 0755 VIRTIOFSD");
 ##############################
 #     Add taps and Bridges.
 ##############################
@@ -166,16 +187,16 @@ foreach(values %Nic){
     $Bridge{$_} = undef;
 }
 # Create bridges that are not already in place.
-foreach(keys %Bridge){
-    defined($Bridge{$_}) || next;
+foreach(my ($key,$value) = each %Bridge){
+    defined $value || next;
     # Bridge Name
-    $tmp = $Nic{$Bridge{$_}};
-    run("$permit IP address flush dev $tmp");
-    run("$permit IP link add name $_ type bridge");
-    run("$permit IP link set $_ up");
-    run("$permit IP link set $tmp down");
-    run("$permit IP link set $tmp up");
-    run("$permit IP link set $tmp master $_");
+    $tmp = $Nic{$value};
+    run("@permit IP address flush dev $tmp");
+    run("@permit IP link add name $key type bridge");
+    run("@permit IP link set $key up");
+    run("@permit IP link set $tmp down");
+    run("@permit IP link set $tmp up");
+    run("@permit IP link set $tmp master $key");
 }
 # Filter out exist taps and bridge it.
 foreach(values %Nic){
@@ -186,27 +207,27 @@ foreach(values %Nic){
         next;
     }
     $Tap{$_} =~ tr/://d;
-    run("$permit IP link set dev $_ up");
-    run("$permit IP link set $_ master $Tap{$_}");
+    run("@permit IP link set dev $_ up");
+    run("@permit IP link set $_ master $Tap{$_}");
     $Tap{$_} = undef;
 }
 # Add new taps and bridge it.
-foreach(keys %Tap){
-    defined($Tap{$_}) || next;
-    run("$permit IP tuntap add dev $_ mode tap user $User[0]");
-    run("$permit IP link set dev $_ up");
-    $Tap{$_} =~ tr/://d;
-    run("$permit IP link set $_ master $Tap{$_}");
-    $Tap{$_} = undef;
+foreach(my ($key,$value) = each %Tap){
+    defined $value || next;
+    run("@permit IP tuntap add dev $key mode tap user $User[0]");
+    run("@permit IP link set dev $key up");
+    $value =~ tr/://d;
+    run("@permit IP link set $key master $value");
+    $value = undef;
 }
 
 ##################################
 #   Start vm
 ##################################
 
-run("$permit CHMOD 4755 QEMU");
+run("@permit CHMOD 4755 QEMU");
 daemon("QEMU -chroot /var/tmp/ -runas kvm @Config");
-run("$permit CHMOD 0755 QEMU");
+run("@permit CHMOD 0755 QEMU");
 
 #######################################
 # Wait until virtiofsd created sockets.
@@ -214,13 +235,13 @@ run("$permit CHMOD 0755 QEMU");
 #######################################
 
 @_ = glob("$virtiofsdsocksdir*");
-run("$permit CHOWN :$Kvm[0] @_");
-run("$permit CHMOD g=rw @_");
+run("@permit CHOWN :$Kvm[0] @_");
+run("@permit CHMOD g=rw @_");
 
 sleep 1;
 ( -S "$socksdir/$guestname" ) || die "$socksdir/$guestname not yet created.";
-run("$permit CHOWN $Kvm[0]:$Kvm[0] $socksdir/$guestname");
-run("$permit CHMOD ug=rw $socksdir/$guestname");
+run("@permit CHOWN $Kvm[0]:$Kvm[0] $socksdir/$guestname");
+run("@permit CHMOD ug=rw $socksdir/$guestname");
 
 #print Dumper(\@Config);
 #print Dumper(\%Bridge);
