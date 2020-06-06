@@ -8,7 +8,7 @@ gb.substitute()
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock groups
     lspci tee umount mount grub-mkconfig ethtool sleep modinfo kill
     qemu-nbd lsusb realpath mkinitcpio parted less systemctl virtiofsd
-    gpasswd'
+    gpasswd bridge'
     declare -A Devlist=(
     )
     cmdlist="${Devlist[@]} $cmdlist"
@@ -143,8 +143,9 @@ gb.pl.install()
     -e "s;QEMU;$qemu_system_x86_64;g" \
     -e "s;MV;$mv;g" \
     -e "s;LSPCI;$lspci;g" \
-    -e "s;MODPROB;$modprobe;g" \
+    -e "s;MODPROBE;$modprobe;g" \
     -e "s;PCIDIR;$pcidir;g" \
+    -e "s;BRIDGE;$bridge;g" \
     src/gb.pl > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
 }
