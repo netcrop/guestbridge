@@ -18,26 +18,14 @@ my @Kvm = getpwnam('kvm');
 my $user = getlogin();
 my @User = getpwnam($user);
 my @permit = ();
+my $cleanup = 1;
 @permit = qw(SUDO) unless $User[2] == 0;
-sub calldie {
-    pipe(my ($rfh,$wfh)) or die "Cann't create pipe $!";
-    my $pid = open(my $pipe,'-|') // die "Can't fork:$!";
-    if(not $pid){
-        # Child process.
-        close($rfh);
-        system(split(/ /,$_[0])) == 0 or die "$_[0]: $!";
-        exit;
-    }
-    # Parent process.
-    close($wfh);
-    close($rfh);
-    @_ = <$pipe>;
-    close($pipe);
-    return @_;
-}
 sub clean {
+    return unless $cleanup;
+    $cleanup = 0;
     say "clean start";
-    foreach(calldie("$bridge link")){
+    # Restore bridge and taps.
+    foreach(call("$bridge link")){
         %Tmp = ();
         @_ = split(/\s/);
         foreach(my $i = 3; $i < scalar(@_); $i++){
@@ -50,7 +38,10 @@ sub clean {
     while(my ($key,$value) = each %Clean){
         # Don't bother with devices were there before this process.
         next if defined $Master{$key};
-        say "clean";
+        if(defined $Tap{$key}){
+            system(split(/ /,"@permit $ip tuntap delete dev $key mode tap" )) == 0 or die "tap delete: $!";
+            next;
+        }
         if (defined $Bridge{$value}){
             next unless defined $Nic{$Bridge{$value}};
             $tmp = $Nic{$Bridge{$value}};
@@ -59,8 +50,18 @@ sub clean {
             system(split(/ /,"@permit $ip link delete $value type bridge")) == 0 or die "bridge delete: $!";;
             next;
         }
-        system(split(/ /,"@permit $ip tuntap delete dev $value mode tap" )) == 0 or die "tap delete: $!";
-        say $value;
+    }
+    # Restore Device drivers
+    while( my ($key, $value) = each %Wish){
+        if ( not defined $Real{$key}){
+            next unless defined $Module{$key};
+            system(split(/ /,"$modprobe $Module{$key}")) == 0 or die "loadmod $Module{$key}: $!";
+            gb_bind($key, $Module{$key});
+            next;
+        }
+        next if $Real{$key} eq $value;
+        system(split(/ /,"$modprobe $Module{$key}")) == 0 or die "loadmod $Module{$key}: $!";
+        gb_rebind($key, $value, $Module{$key});
     }
     say "clean end";
 }
@@ -261,10 +262,10 @@ while(my ($key, $value) = each %Wish){
 #print Dumper(\%Wish);
 #print Dumper(\%Real);
 #print Dumper(\%Module);
-=head
 ############################
 #        Virfiofs
 ############################
+=head
 run("@permit $chmod 4755 VIRTIOFSD");
 while(my ($key,$value) = each %Path){
     next if( -S "$virtiofsdsocksdir$guestname-${key}.sock" );
@@ -329,12 +330,16 @@ while(my ($key,$value) = each %Tap){
     run("@permit $ip link set $key master $value");
     $value = undef;
 }
+#print Dumper(\%Tap);
 #print Dumper(\%Nic);
-print Dumper(\%Bridge);
+#print Dumper(\%Bridge);
 #print Dumper(\@Config);
-clean();
-print Dumper(\%Clean);
-__END__
+#print Dumper(\%Clean);
+
+# Check sockets creation.
+@_ = glob("$virtiofsdsocksdir*");
+delocate "empty $virtiofsdsocksdir:" unless scalar(@_) > 0;
+
 ##################################
 #   Start vm
 ##################################
@@ -348,7 +353,6 @@ run("@permit $chmod 0755 $qemu");
 # It's time to change permission.
 #######################################
 
-@_ = glob("$virtiofsdsocksdir*");
 run("@permit $chown :$Kvm[0] @_");
 run("@permit $chmod g=rw @_");
 
@@ -360,6 +364,5 @@ run("@permit $chmod ug=rw $socksdir/$guestname");
 #print Dumper(\%Bridge);
 #print Dumper(\%Nic);
 #print Dumper(\%Master);
-#print Dumper(\%Tap);
 #print Dumper(\%Path);
 #__END__
