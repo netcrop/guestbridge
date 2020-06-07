@@ -4,7 +4,6 @@ use strict;
 use warnings;
 use POSIX qw(setsid setgid setuid);
 use Data::Dumper;
-
 die "[guestimage file]:$!" unless defined $ARGV[0] && -r $ARGV[0];
 my ( $guestimg,$tmp,$pid,$rootdir) = ($ARGV[0],undef,undef,'/');
 my ($gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir)
@@ -20,6 +19,10 @@ my @User = getpwnam($user);
 my @permit = ();
 my $cleanup = 1;
 @permit = qw(SUDO) unless $User[2] == 0;
+my %me = ();
+$me{user} = 1;
+say $me{user};
+__END__
 sub clean {
     return unless $cleanup;
     $cleanup = 0;
