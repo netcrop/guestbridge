@@ -19,9 +19,6 @@ my @User = getpwnam($user);
 my @permit = ();
 my $cleanup = 1;
 @permit = qw(SUDO) unless $User[2] == 0;
-my %me = ();
-$me{user} = 1;
-say $me{user};
 __END__
 sub clean {
     return unless $cleanup;
