@@ -11,8 +11,8 @@ my ($gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir)
 = qw(GUESTBRIDGEDIR VFIODIR SOCKSDIR VIRTIOFSDSOCKSDIR);
 my (@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path,%Wish,%Module,%Real,%Clean)
 = ((),(),(),(),(),(),(),(),());
-my ($pcidir,$chown,$chmod,$ip,$lspci, $modprobe,$qemu,$bridge)
-= qw(PCIDIR CHOWN CHMOD IP LSPCI MODPROBE QEMU BRIDGE);
+my ($pcidir,$chown,$chmod,$ip,$lspci, $modprobe,$qemu,$bridge,$virtiofsd)
+= qw(PCIDIR CHOWN CHMOD IP LSPCI MODPROBE QEMU BRIDGE VIRTIOFSD);
 my $bdfpattern = '..\:..\..';
 my @Kvm = getpwnam('kvm');
 my $user = getlogin();
@@ -27,7 +27,7 @@ sub clean {
     # Restore bridge and taps.
     foreach(call("$bridge link")){
         %Tmp = ();
-        @_ = split(/\s/);
+        @_ = split(/\s+/);
         foreach(my $i = 3; $i < scalar(@_); $i++){
             next unless ( $_[$i] =~ m;master;);
             $Tmp{$_[$i]} = $_[$i + 1];
@@ -39,15 +39,15 @@ sub clean {
         # Don't bother with devices were there before this process.
         next if defined $Master{$key};
         if(defined $Tap{$key}){
-            system(split(/ /,"@permit $ip tuntap delete dev $key mode tap" )) == 0 or die "tap delete: $!";
+            run("@permit $ip tuntap delete dev $key mode tap");
             next;
         }
         if (defined $Bridge{$value}){
             next unless defined $Nic{$Bridge{$value}};
             $tmp = $Nic{$Bridge{$value}};
-            system(split(/ /,"@permit $ip link set $tmp nomaster")) == 0 or die "$tmp: $!";;
-            system(split(/ /,"@permit $ip link set $tmp down")) == 0 or die "$tmp: $!";;
-            system(split(/ /,"@permit $ip link delete $value type bridge")) == 0 or die "bridge delete: $!";;
+            run("@permit $ip link set $tmp nomaster");
+            run("@permit $ip link set $tmp down");
+            run("@permit $ip link delete $value type bridge");
             next;
         }
     }
@@ -55,12 +55,12 @@ sub clean {
     while( my ($key, $value) = each %Wish){
         if ( not defined $Real{$key}){
             next unless defined $Module{$key};
-            system(split(/ /,"$modprobe $Module{$key}")) == 0 or die "loadmod $Module{$key}: $!";
+            run("@permit $modprobe $Module{$key}");
             gb_bind($key, $Module{$key});
             next;
         }
         next if $Real{$key} eq $value;
-        system(split(/ /,"$modprobe $Module{$key}")) == 0 or die "loadmod $Module{$key}: $!";
+        run("@permit $modprobe $Module{$key}");
         gb_rebind($key, $value, $Module{$key});
     }
     say "clean end";
@@ -76,7 +76,7 @@ sub call {
     if(not $pid){
         # Child process.
         close($rfh);
-        system(split(/ /,$_[0])) == 0 or delocate "$_[0]: $!";
+        system(split(/\s+/,$_[0])) == 0 or delocate "$_[0]: $!";
         exit;
     }
     # Parent process.
@@ -87,27 +87,26 @@ sub call {
     return @_;
 }
 sub run {
-    CORE::system(split(/ /, $_[0])) == 0 or delocate "$_[0]: $!";
+    CORE::system(split(/\s+/, $_[0])) == 0 or delocate "$_[0]: $!";
 }
 sub daemon {
-    if(not ($pid = fork)){
-        # child
-        delocate "cann't fork:$!" unless defined $pid;
-        delocate "cann't chdir to $rootdir: $!" unless chdir $rootdir;
-        umask 0077;
-        delocate "can't setsid" if setsid() < 0;
-        close STDIN;
- #       close STDOUT;
- #       close STDERR;
-        setgid $Kvm[3];
-        setuid $Kvm[2];
-        open(STDIN,"</dev/null");
- #       open(STDOUT,"+>/dev/null");
- #       open(STDERR,"+>/dev/null");
-        exec(split(/ /, $_[0])) or delocate "$_[0]: $!";
-        # just in case child don't delocate.
-        exit;
-    }
+    return if $pid = fork;
+    # child pid is 0
+    delocate "cann't fork:$!" unless defined $pid;
+    delocate "cann't chdir to $rootdir: $!" unless chdir $rootdir;
+    umask 0077;
+    delocate "can't setsid" if setsid() < 0;
+    close STDIN;
+#   close STDOUT;
+#   close STDERR;
+    setgid $Kvm[3];
+    setuid $Kvm[2];
+    open(STDIN,"</dev/null");
+#   open(STDOUT,"+>/dev/null");
+#   open(STDERR,"+>/dev/null");
+    exec(split(/\s+/, $_[0])) or delocate "$_[0]: $!";
+    # just in case child don't delocate.
+    exit;
 }
 sub gb_bind {
     delocate "[bdf][bind driver: vfio-pci]" if scalar(@_) < 2;
@@ -118,7 +117,7 @@ sub gb_bind {
     my $idpath = "$pcidir/$bind/new_id";
     my $bindpath = "$pcidir/$bind/bind";
     @_ = call("$lspci -s $bdf -n");
-    my @id = split(/ /,$_[0]);
+    my @id = split(/\s+/,$_[0]);
     $id[2] =~ tr/:/ /;
     run("@permit $chown $user: $idpath $bindpath");
     open(my $fh, '>', $idpath) or delocate "can't open $idpath";
@@ -154,7 +153,7 @@ sub gb_rebind {
     my $idpath = "$pcidir/$bind/new_id";
     my $bindpath = "$pcidir/$bind/bind";
     @_ = call("$lspci -s $bdf -n");
-    my @id = split(/ /,$_[0]);
+    my @id = split(/\s+/,$_[0]);
     $id[2] =~ tr/:/ /;
     run("@permit $chown $user: $idpath $bindpath $unbindpath");
     open(my $fh, '>', $unbindpath) or delocate "can't open $unbindpath";
@@ -167,6 +166,15 @@ sub gb_rebind {
     print $fh $bdf;
     close $fh;
     run("@permit $chown root: $idpath $bindpath $unbindpath");
+}
+sub gb_perm {
+    return unless scalar %Path > 0;
+    # Check sockets creation.
+    @_ = glob("$virtiofsdsocksdir*");
+    delocate "empty $virtiofsdsocksdir:" unless scalar(@_) > 0;
+
+    run("@permit $chown :$Kvm[0] @_");
+    run("@permit $chmod g=rw @_");
 }
 $_ = $guestimg;
 s;.*\/;;;
@@ -262,24 +270,24 @@ while(my ($key, $value) = each %Wish){
 #print Dumper(\%Wish);
 #print Dumper(\%Real);
 #print Dumper(\%Module);
-############################
-#        Virfiofs
-############################
-=head
-run("@permit $chmod 4755 VIRTIOFSD");
+#################################
+#        Virfiofsd by setuid
+#################################
+run("@permit $chmod 4755 $virtiofsd");
 while(my ($key,$value) = each %Path){
     next if( -S "$virtiofsdsocksdir$guestname-${key}.sock" );
-    daemon("VIRTIOFSD --syslog --socket-path=$virtiofsdsocksdir$guestname-${key}.sock --thread-pool-size=6 -o source=${value}");
+    daemon("$virtiofsd --syslog --socket-path=$virtiofsdsocksdir$guestname-${key}.sock
+         --thread-pool-size=6 -o source=${value}");
 }
-run("@permit $chmod 0755 VIRTIOFSD");
-=cut
+# due to Daemon is nonblocking this will always run.
+run("@permit $chmod 0755 $virtiofsd");
 ##############################
 #     Add taps and Bridges.
 ##############################
 # All nic names
 foreach(call("$ip -o link show")){
     %Tmp = ();
-    @_ = split(/\s/);
+    @_ = split(/\s+/);
     foreach(my $i = 3; $i < scalar(@_); $i++){
         next unless ( $_[$i] =~ m;permaddr|link/ether|master;);
         $Tmp{$_[$i]} = $_[$i + 1];
@@ -335,31 +343,24 @@ while(my ($key,$value) = each %Tap){
 #print Dumper(\%Bridge);
 #print Dumper(\@Config);
 #print Dumper(\%Clean);
+#######################################
+# Wait until virtiofsd created sockets.
+# It's time to change permission.
+#######################################
 
-# Check sockets creation.
-@_ = glob("$virtiofsdsocksdir*");
-delocate "empty $virtiofsdsocksdir:" unless scalar(@_) > 0;
-
+gb_perm();
 ##################################
-#   Start vm
+#   Start vm by setuid
 ##################################
 
 run("@permit $chmod 4755 $qemu");
 daemon("$qemu -chroot /var/tmp/ -runas kvm @Config");
 run("@permit $chmod 0755 $qemu");
 
-#######################################
-# Wait until virtiofsd created sockets.
-# It's time to change permission.
-#######################################
-
-run("@permit $chown :$Kvm[0] @_");
-run("@permit $chmod g=rw @_");
-
-sleep 1;
-( -S "$socksdir/$guestname" ) || delocate "$socksdir/$guestname not yet created.";
-run("@permit $chown $Kvm[0]:$Kvm[0] $socksdir/$guestname");
-run("@permit $chmod ug=rw $socksdir/$guestname");
+#sleep 1;
+#( -S "$socksdir/$guestname" ) || delocate "$socksdir/$guestname not yet created.";
+#run("@permit $chown $Kvm[0]:$Kvm[0] $socksdir/$guestname");
+#run("@permit $chmod ug=rw $socksdir/$guestname");
 
 #print Dumper(\%Bridge);
 #print Dumper(\%Nic);

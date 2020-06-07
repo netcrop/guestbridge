@@ -8,7 +8,7 @@ gb.substitute()
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock groups
     lspci tee umount mount grub-mkconfig ethtool sleep modinfo kill
     qemu-nbd lsusb realpath mkinitcpio parted less systemctl virtiofsd
-    gpasswd bridge'
+    gpasswd bridge stat'
     declare -A Devlist=(
     )
     cmdlist="${Devlist[@]} $cmdlist"
@@ -774,14 +774,15 @@ gb.socks()
     local name=\${1:?\$help}
     \builtin shift
     local cmd=\${@:?[QEMU monitor commands eg: info name]}
-#    set -o xtrace
-    [[ -S ${socksdir}/\$name ]] && {
-        $socat - UNIX-CONNECT:${socksdir}/\$name <<<"\${cmd}"
-        set +o xtrace
-        return
+#    set -x
+    [[ -S "${socksdir}/\$name" ]] && name="${socksdir}/\$name"
+    [[ -S \$name ]] || return
+    [[ "\$($stat -c %G \$name)" == 'kvm' ]] || {
+        $sudo $chown :kvm \$name
+        $sudo $chmod g=rw \$name
     }
-    [[ -S \$name ]] && $socat - UNIX-CONNECT:\$name  <<<"\${cmd}"
-    set +o xtrace
+    $socat - UNIX-CONNECT:\$name <<<"\${cmd}"
+    set +x
 }
 
 gb.info()
