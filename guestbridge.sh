@@ -125,6 +125,30 @@ gb.bind()
     \$permit $chown root: \${idpath} \${bindpath}
     $lspci -s \${bdf} -k
 }
+gb2.pl.install()
+{
+    $sed -e "s;ENV;$env;" -e "s;PERL;$perl;" \
+    -e "s;VERSION;$perl_version;" \
+    -e "s;GUESTBRIDGEDIR;$guestbridgedir;" -e "s;VFIODIR;$vfiodir;" \
+    -e "s;VIRTIOFSDSOCKSDIR;$virtiofsdsocksdir;" \
+    -e "s;SOCKSDIR;$socksdir;" \
+    -e "s;SUDO;$sudo;" -e "s;GROUPS;$groups;" \
+    -e "s;GPASSWD;$gpasswd;" \
+    -e "s;IP;$ip;" \
+    -e "s;^#[^\!].*\$;;g" \
+    -e "s;BASH;$bash;g" \
+    -e "s;VIRTIOFSD;$virtiofsd;g" \
+    -e "s;CHOWN;$chown;g" \
+    -e "s;CHMOD;$chmod;g" \
+    -e "s;QEMU;$qemu_system_x86_64;g" \
+    -e "s;MV;$mv;g" \
+    -e "s;LSPCI;$lspci;g" \
+    -e "s;MODPROBE;$modprobe;g" \
+    -e "s;PCIDIR;$pcidir;g" \
+    -e "s;BRIDGE;$bridge;g" \
+    src/gb2.pl | $ptr > ${bindir}/gb2
+    $chmod u=rwx ${bindir}/gb2
+}
 gb.pl.install()
 {
     $sed -e "s;ENV;$env;" -e "s;PERL;$perl;" \
@@ -146,7 +170,7 @@ gb.pl.install()
     -e "s;MODPROBE;$modprobe;g" \
     -e "s;PCIDIR;$pcidir;g" \
     -e "s;BRIDGE;$bridge;g" \
-    src/gb.pl | $ptr > ${bindir}/gb
+    src/gb.pl > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
 }
 gb.query.mac()
