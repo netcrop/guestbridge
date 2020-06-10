@@ -7,7 +7,7 @@ use Data::Dumper;
 use Socket;
 use Fcntl qw :flock;
 my %me = ();
-my $lockfh;
+my $lockfh = undef;
 #############################
 # restore nic
 #############################
@@ -34,7 +34,6 @@ sub renic {
             if ( defined me.tap{us} ){
                 run @me.permit me.ip tuntap delete dev us mod tap;
                 me.i++;
-                say us;
                 next;
             }
             next unless defined me.nic{us};
@@ -48,7 +47,7 @@ sub renic {
     }
 }
 sub clean {
-    say "clean start me.cleanup";
+    debug "clean start";
     return if me.cleanup == 0;
     say "cleaning";
     me.cleanup = 0;
@@ -109,7 +108,6 @@ sub clean {
         me.tmp =~ s;.*\.;;g;
         next if me.socksname{me.tmp};
         if( m;pid$;){
-            say us;
             open my $fh, '<', us or die "can't open";
             me.tmp = <$fh>;
             run @me.permit me.kill -s SIGKILL me.tmp;
@@ -122,13 +120,15 @@ sub clean {
     next unless -d me.virtiofsdsocksdir;
     me.any = glob "me.virtiofsdsocksdir/* me.virtiofsdsocksdir/\.??*"; 
     run @me.permit me.rmdir me.virtiofsdsocksdir unless defined scalar me.any; 
-    say "clean end";
+    debug "clean end";
 }
 sub dumpfilter {
     my ($hash) = @_;
     return [ ( sort {$b cmp $a} keys %$hash) ];
 }
 sub debug {
+    return unless me.debugging == 1;
+    say @_;
     open my $fh, '>', '/tmp/gb.log' or die "can't open /tmp/gb.log";
     $Data::Dumper::Sortkeys = \&dumpfilter;
     print $fh Dumper( \%me);
@@ -136,19 +136,17 @@ sub debug {
 }
 sub delocate {
     clean();
-#    debug();
     foreach ((0,1,2)){
         me.tmp = (caller(us))[3];
         next unless defined me.tmp;
         me.tmp .= " [" . (caller(us))[2] . "]";
-        say me.tmp;
     }
     if ( defined $lockfh ){
         flock $lockfh, LOCK_UN or die "can't unlock";
         close $lockfh;
-#        say "flockfh $lockfh closed.";
         $lockfh = undef;
     }
+#    debug();
     die @_;
 }
 sub run {
@@ -494,7 +492,6 @@ sub cron {
 }
 
 sub bootgpu {
-    say "bootgpu";
     me.cleanup = 0;
     @_ = glob "/dev/fb*";
     return unless scalar @_ == 0;
@@ -523,11 +520,13 @@ sub bootgpu {
 }
 sub funlock {
     me.cleanup = 0;
+    next if defined $lockfh; 
     open $lockfh, '<', me.lockfile or die "can't open";    
     flock $lockfh, (LOCK_NB | LOCK_EX) or die "can't lock";
     us[0]();
     flock $lockfh, LOCK_UN or die "can't unlock";
     close $lockfh;
+    $lockfh = undef;
 }
 #############################
 # Main
@@ -546,6 +545,7 @@ USAGE
 }
 sub main {
     me.cleanup = 0;
+    me.debugging = 0;
     me.bdfpattern = qw ..\:..\..;
     me.lockfile = qw VFIODIR;
     me.primarygpu = qw nouveau;
