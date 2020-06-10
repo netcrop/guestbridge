@@ -10,6 +10,7 @@ Administrator can therefore maintain a minimal footprint on host OS and keep it 
 * For linux/unix system:  
 required commands and packages:
 Bash version 4.4+
+Perl version 5.30+
 coreutils
 modprobe
 lsmod
@@ -35,11 +36,15 @@ Switched to branch arch
 # Follow the instruction from this command.
 > gb.info
 ...
+# guest config file follow the same syntax as qemu command line.
+> cat sample/arch
+...
 # Install Systemd cron service for auto release devices passed through to guests.
 > gb.croninstall
 ...
 # Start guest with bridged network tap or pass through PCI devices via config file
-> gb.run [GUEST IMAG QCOW2/RAW] [BRIDGE] [NETWORK INTERFACE]
+> gb [GUEST COINFIG FILE]
+...
 # Communicate with guests via socket.
 > gb.socks [GUEST NAME] info name
 ```

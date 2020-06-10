@@ -1,372 +1,573 @@
 #!ENV PERL
 use VERSION;
 use strict;
-use warnings;
-use POSIX qw(setsid setgid setuid);
+use warnings qw FATAL;
+use POSIX qw setsid setgid setuid;
 use Data::Dumper;
-die "[guestimage file]:$!" unless defined $ARGV[0] && -r $ARGV[0];
-my ( $guestimg,$tmp,$pid,$rootdir) = ($ARGV[0],undef,undef,'/');
-my ($gbdir,$vfiodir,$socksdir,$virtiofsdsocksdir)
-= qw(GUESTBRIDGEDIR VFIODIR SOCKSDIR VIRTIOFSDSOCKSDIR);
-my (@Config,%Bridge,%Tap,%Nic,%Tmp,%Master,%Path,%Wish,%Module,%Real,%Clean)
-= ((),(),(),(),(),(),(),(),());
-my ($pcidir,$chown,$chmod,$ip,$lspci, $modprobe,$qemu,$bridge,$virtiofsd)
-= qw(PCIDIR CHOWN CHMOD IP LSPCI MODPROBE QEMU BRIDGE VIRTIOFSD);
-my $bdfpattern = '..\:..\..';
-my @Kvm = getpwnam('kvm');
-my $user = getlogin();
-my @User = getpwnam($user);
-my @permit = ();
-my $cleanup = 1;
-@permit = qw(SUDO) unless $User[2] == 0;
+use Socket;
+use Fcntl qw :flock;
+my %me = ();
+my $lockfh;
+#############################
+# restore nic
+#############################
+sub renic {
+    # restore bridge and bridged taps
+    foreach ( call me.bridge link ) {
+        me.any = ();
+        @_ = split /\s+/;
+        foreach ( me.i = 3; me.i < scalar @_; me.i ++ ){
+            next unless us[me.i] =~ m;master;;
+            me.any{us[me.i]} = us[me.i + 1];
+        }
+        us[1] =~ tr/://d;
+        next unless defined me.any{master};
+        me.nic{us[1]} = me.any{master}; 
+        me.cin{me.any{master}} .= " us[1]";
+    }
+    me.any = ();
+    while ( (me.key, me.value) = each %me.cin ){
+        @me.any = split(" ", me.value );
+        me.tmp = undef;
+        me.i = 0;
+        foreach (@me.any) {
+            if ( defined me.tap{us} ){
+                run @me.permit me.ip tuntap delete dev us mod tap;
+                me.i++;
+                say us;
+                next;
+            }
+            next unless defined me.nic{us};
+            me.tmp = us unless defined me.tmp;
+        }
+        next unless me.i == (scalar( @me.any) - 1);
+        next unless defined me.tmp;
+        run @me.permit me.ip link set me.tmp nomaster;
+        run @me.permit me.ip link set me.tmp down;
+        run @me.permit me.ip link delete me.key type bridge;
+    }
+}
 sub clean {
-    return unless $cleanup;
-    $cleanup = 0;
-    say "clean start";
-    # Restore bridge and taps.
-    foreach(call("$bridge link")){
-        %Tmp = ();
-        @_ = split(/\s+/);
-        foreach(my $i = 3; $i < scalar(@_); $i++){
-            next unless ( $_[$i] =~ m;master;);
-            $Tmp{$_[$i]} = $_[$i + 1];
+    say "clean start me.cleanup";
+    return if me.cleanup == 0;
+    say "cleaning";
+    me.cleanup = 0;
+    # restore bridge and bridged taps
+    foreach ( call me.bridge link ) {
+        me.any = ();
+        @_ = split /\s+/;
+        foreach ( me.i = 3; me.i < scalar @_; me.i ++ ){
+            next unless us[me.i] =~ m;master;;
+            me.any{us[me.i]} = us[me.i + 1];
         }
-        $_[1] =~ tr/://d;
-        $Clean{$_[1]} = $Tmp{master} if defined $Tmp{master};
+        us[1] =~ tr/://d;
+        me.clean{us[1]} = me.any{master} if defined me.any{master}; 
     }
-    while(my ($key,$value) = each %Clean){
-        # Don't bother with devices were there before this process.
-        next if defined $Master{$key};
-        if(defined $Tap{$key}){
-            run("@permit $ip tuntap delete dev $key mode tap");
+    # restore disconnected taps.
+    foreach ( call me.ip tuntap ){
+        @_ = split /:/;
+        defined us[0] || next;
+        next if defined me.clean{us[0]};
+        me.clean{us[0]} = 0; 
+    }
+    while ( (me.key, me.value) = each %me.clean){
+        # don't bother with devices were there before this process.
+        next if defined me.master{me.key};
+        if ( defined me.tap{me.key} ){
+            run @me.permit me.ip tuntap delete dev me.key mod tap;
             next;
         }
-        if (defined $Bridge{$value}){
-            next unless defined $Nic{$Bridge{$value}};
-            $tmp = $Nic{$Bridge{$value}};
-            run("@permit $ip link set $tmp nomaster");
-            run("@permit $ip link set $tmp down");
-            run("@permit $ip link delete $value type bridge");
+        if ( defined me.config_bridge{me.value} ){
+            next unless defined me.nic{me.config_bridge{me.value}};
+            me.tmp = me.nic{me.config_bridge{me.value}};
+            run @me.permit me.ip link set me.tmp nomaster;
+            run @me.permit me.ip link set me.tmp down;
+            run @me.permit me.ip link delete me.value type bridge;
             next;
         }
     }
-    # Restore Device drivers
-    while( my ($key, $value) = each %Wish){
-        if ( not defined $Real{$key}){
-            next unless defined $Module{$key};
-            run("@permit $modprobe $Module{$key}");
-            gb_bind($key, $Module{$key});
+    # restore device drivers
+    while ( (me.key, me.value ) = each %me.wish ){
+        unless (defined me.real{me.key}){
+            next unless defined me.module{me.key};
+            run @me.permit me.modprobe me.module{me.key};
+            gb_bind(me.key, me.module{me.key});
             next;
         }
-        next if $Real{$key} eq $value;
-        run("@permit $modprobe $Module{$key}");
-        gb_rebind($key, $value, $Module{$key});
+        next if me.real{me.key} eq me.value;
+        run @me.permit me.modprobe me.module{me.key};
+        gb_rebind( me.key, me.value, me.module{me.key});
+    }    
+    # remove virtiofsd socks
+    foreach ( glob "me.socksdir/*"){
+        me.tmp = s;.*/;;rg;
+        me.socksname{me.tmp} = us;
     }
+    foreach ( glob "me.virtiofsdsocksdir/* me.virtiofsdsocksdir/\.??*" ){
+        me.tmp = s;.*\/;;rg;
+        me.tmp =~ s;-@.*;;g;
+        me.tmp =~ s;.*\.;;g;
+        next if me.socksname{me.tmp};
+        if( m;pid$;){
+            say us;
+            open my $fh, '<', us or die "can't open";
+            me.tmp = <$fh>;
+            run @me.permit me.kill -s SIGKILL me.tmp;
+            run @me.permit me.rm -f us;
+            close $fh;
+            next;
+        }
+        run @me.permit me.rm -f us if m;sock$;;
+    }
+    next unless -d me.virtiofsdsocksdir;
+    me.any = glob "me.virtiofsdsocksdir/* me.virtiofsdsocksdir/\.??*"; 
+    run @me.permit me.rmdir me.virtiofsdsocksdir unless defined scalar me.any; 
     say "clean end";
+}
+sub dumpfilter {
+    my ($hash) = @_;
+    return [ ( sort {$b cmp $a} keys %$hash) ];
+}
+sub debug {
+    open my $fh, '>', '/tmp/gb.log' or die "can't open /tmp/gb.log";
+    $Data::Dumper::Sortkeys = \&dumpfilter;
+    print $fh Dumper( \%me);
+    close $fh;
 }
 sub delocate {
     clean();
+#    debug();
+    foreach ((0,1,2)){
+        me.tmp = (caller(us))[3];
+        next unless defined me.tmp;
+        me.tmp .= " [" . (caller(us))[2] . "]";
+        say me.tmp;
+    }
+    if ( defined $lockfh ){
+        flock $lockfh, LOCK_UN or die "can't unlock";
+        close $lockfh;
+#        say "flockfh $lockfh closed.";
+        $lockfh = undef;
+    }
     die @_;
 }
-
+sub run {
+    system( split(/\s+/, us[0])) == 0 or delocate(us[0]);
+}
 sub call {
-    pipe(my ($rfh,$wfh)) or delocate "Cann't create pipe $!";
-    my $pid = open(my $pipe,'-|') // delocate "Can't fork:$!";
-    if(not $pid){
-        # Child process.
-        close($rfh);
-        system(split(/\s+/,$_[0])) == 0 or delocate "$_[0]: $!";
+    pipe( me.rfh,me.wfh ) or delocate ("can't pipe");
+    # also check pid is defined or not
+    # pipe must be local variable.
+    me.pid = open( my $pipe,'-|' ) // delocate ("cant fork");
+    if ( not me.pid ){
+        # child process
+        close me.rfh;
+        system( split(/\s+/, us[0]) ) == 0 or delocate ("us[0]:");
         exit;
     }
-    # Parent process.
-    close($wfh);
-    close($rfh);
+    # parent process
+    close me.wfh;
+    close me.rfh;
     @_ = <$pipe>;
-    close($pipe);
+    close $pipe;
     return @_;
 }
-sub run {
-    CORE::system(split(/\s+/, $_[0])) == 0 or delocate "$_[0]: $!";
-}
 sub daemon {
-    return if $pid = fork;
+    return if me.pid = fork;
     # child pid is 0
-    delocate "cann't fork:$!" unless defined $pid;
-    delocate "cann't chdir to $rootdir: $!" unless chdir $rootdir;
+    delocate ("can't fork:") unless defined me.pid;
+    delocate ("can't chdir to me.rootdir:") unless chdir me.rootdir;
     umask 0077;
-    delocate "can't setsid" if setsid() < 0;
+    delocate ("can't setsid") if setsid() < 0;
     close STDIN;
-#   close STDOUT;
-#   close STDERR;
-    setgid $Kvm[3];
-    setuid $Kvm[2];
-    open(STDIN,"</dev/null");
-#   open(STDOUT,"+>/dev/null");
-#   open(STDERR,"+>/dev/null");
-    exec(split(/\s+/, $_[0])) or delocate "$_[0]: $!";
-    # just in case child don't delocate.
+#    close STDOUT;
+#    close STDERR;
+    setgid me.kvm[3];
+    setuid me.kvm[2];
+    open STDIN, '</dev/null';
+#    open STDOUT, '+>/dev/null';
+#    open STDERR, '+>/dev/null';
+    exec( split(/\s+/, us[0]) ) or delocate ("us[0]:");
+    # in case child don't delocate.
     exit;
 }
-sub gb_bind {
-    delocate "[bdf][bind driver: vfio-pci]" if scalar(@_) < 2;
-    delocate "invalid bdf:" unless $_[0] =~ $bdfpattern;
-    my $bdf = "0000:$_[0]";
-    my $bind = $_[1];
-    $bind =~ tr/_/-/ unless -d "${pcidir}/${bind}";
-    my $idpath = "$pcidir/$bind/new_id";
-    my $bindpath = "$pcidir/$bind/bind";
-    @_ = call("$lspci -s $bdf -n");
-    my @id = split(/\s+/,$_[0]);
-    $id[2] =~ tr/:/ /;
-    run("@permit $chown $user: $idpath $bindpath");
-    open(my $fh, '>', $idpath) or delocate "can't open $idpath";
-    print $fh $id[2];
-    close $fh;
-    open($fh, '>', $bindpath) or delocate "can't open $bindpath";
-    print $fh $bdf;
-    close $fh;
-    run("@permit $chown root: $idpath $bindpath");
+sub perm {
+    return unless scalar %me.path > 0;
+    # check sockets creation
+    @_ = glob "me.virtiofsdsocksdir/* me.virtiofsdsocksdir/\.??*";
+    delocate ("empty me.virtiofsdsocksdir:") unless scalar @_ > 0;
+    run @me.permit me.chown :me.kvm[0] @_;
+    run @me.permit me.chmod g=rw @_;
 }
-sub gb_unbind {
-    delocate "Requre 2 args:" if scalar(@_) < 2;
-    delocate "invalid bdf:" unless $_[0] =~ $bdfpattern;
-    my $bdf = "0000:$_[0]";
-    my $unbind = $_[1];
-    $unbind =~ tr/_/-/ unless -d "${pcidir}/${unbind}";
-    my $unbindpath = "$pcidir/$unbind/unbind";
-    run("@permit $chown $user: $unbindpath");
-    open(my $fh, '>', $unbindpath) or delocate "can't open $unbindpath";
-    print $fh $bdf;
+############################
+# validate config
+############################
+sub setup {
+    delocate ("Pls add: me.user[0] to grp: me.kvm[0]")
+    unless me.username eq me.kvmgroup[3];
+    delocate "me.socksdir/me.guestname still in place" if -S "me.socksdir/me.guestname";
+    if (not -w me.vfiodir or not -x me.vfiodir ){
+        run @me.permit me.chown :me.kvm[3] me.vfiodir;
+        run @me.permit me.chmod 0775 me.vfiodir;
+    }
+    if(! -d me.virtiofsdsocksdir || ! -w me.virtiofsdsocksdir || ! -x -w me.virtiofsdsocksdir){
+        me.tmp = int(rand(99999)) + 10000;
+        me.tmp = "me.tmpdir/me.tmp";
+        mkdir me.tmp, 0770 or delocate "mkdir me.tmp";
+        chmod 0770, me.tmp;
+        chown( me.user[2], me.kvm[3], me.tmp) or delocate "chown me.user[2] me.kvm[3] me.tmp";
+        run @me.permit me.mv me.tmp me.virtiofsdsocksdir;
+    }
+    foreach ( values %me.path ){
+        delocate "us missing." unless -d us;        
+    }
+}
+sub config {
+    open(INPUT, '<', me.guestcfg) or delocate ("can't open me.guestcfg");
+    chomp(@me.config = <INPUT>);
+    foreach(@me.config){
+        %me.any = ();
+        foreach(split(/,/)){
+            if(m;([^"' ]+)\s*=\s*["']{0,1}([^"' ]+)["']{0,1};){
+                me.any{$1} = $2;
+                next;
+            }
+            if(m;([^"' ]+)\s*["']{0,1}([^"' ]+)["']{0,1};){
+                me.any{$1} = $2;
+                next;
+            }
+        }
+        if (defined me.any{-monitor}){
+            me.any{-monitor} =~ m;unix:(.+)/[^/]+;;
+            me.socksdir = $1;
+        }
+        if ( defined me.any{file} && defined me.any{format}){
+            me.guestimg = me.any{file};
+        }
+        if ( defined me.any{-name}){
+            me.guestname = me.any{-name};
+        }
+        if ( defined me.any{mac} && defined me.any{netdev} ){
+            me.tap{me.any{netdev}} = me.any{mac}; 
+            me.tmp = me.any{mac} =~ tr/://rd;
+            me.config_bridge{me.tmp} = me.any{mac};
+            next;
+        }
+        if ( defined me.any{path} ){
+            me.any{path} =~ m;(.+)/[^/]+-(.+)\.sock;;
+            me.virtiofsdsocksdir = $1 if defined $1;
+            me.path{$2} = $2 =~ tr;@;\/;r if defined $2;
+            next;
+        }
+        if (defined me.any{-device} && defined me.any{host}){
+            me.wish{me.any{host}} = me.any{-device} if me.any{host} =~ me.bdfpattern;
+            next;
+        }
+    }
+}
+sub gb_bind {
+    delocate ("[bdf][bind driver: vfio-pci]") if scalar(@_) < 2;
+    delocate ("invalid bdf:") unless us[0] =~ me.bdfpattern;
+    me.bdf = "0000:us[0]";
+    me.bind = us[1];
+    me.bind =~ tr/_/-/ unless -d "me.pcidir/me.bind";
+    me.idpath = "me.pcidir/me.bind/new_id";
+    me.bindpath = "me.pcidir/me.bind/bind";
+    @_ = call me.lspci -s me.bdf -n;
+    @me.id = split( /\s+/, us[0] );
+    me.id[2] =~ tr/:/ /;
+    run @me.permit me.chown me.username: me.idpath me.bindpath;
+    open( my $fh, '>', me.idpath ) or delocate ("can't open me.idpath");
+    print $fh me.id[2];
     close $fh;
-    run("@permit $chown root: $unbindpath");
+    open( $fh, '>', me.bindpath ) or delocate ("can't open me.bindpath");
+    print $fh me.bdf;
+    close $fh;
+    run @me.permit me.chown root: me.idpath me.bindpath;
 }
 sub gb_rebind {
-    delocate "[bdf][unbind driver: ehci-pci/vfio-pci][bind driver:]" if scalar(@_) < 3;
-    delocate "invalid bdf:$_[0]" unless $_[0] =~ $bdfpattern;
-    my $bdf = "0000:$_[0]";
-    my $unbind = $_[1];
-    my $bind = $_[2];
-    $bind =~ tr/_/-/ unless -d "${pcidir}/${bind}";
-    $unbind =~ tr/_/-/ unless -d "${pcidir}/${unbind}";
-    my $unbindpath = "$pcidir/$unbind/unbind";
-    my $idpath = "$pcidir/$bind/new_id";
-    my $bindpath = "$pcidir/$bind/bind";
-    @_ = call("$lspci -s $bdf -n");
-    my @id = split(/\s+/,$_[0]);
-    $id[2] =~ tr/:/ /;
-    run("@permit $chown $user: $idpath $bindpath $unbindpath");
-    open(my $fh, '>', $unbindpath) or delocate "can't open $unbindpath";
-    print $fh $bdf;
+   delocate ("[bdf][unbind driver: ehci-pci/vfio-pci][bind driver:]") if scalar(@_) < 3;
+    delocate ("invalid bdf: us[0]") unless us[0] =~ me.bdfpattern;
+    me.bdf = "0000:us[0]";
+    me.unbind = us[1];
+    me.bind = us[2];
+    me.bind =~ tr/_/-/ unless -d "me.pcidir/me.bind";
+    me.unbind =~ tr/_/-/ unless -d "me.pcidir/me.unbind";
+    me.unbindpath = "me.pcidir/me.unbind/unbind";
+    me.bindpath = "me.pcidir/me.bind/bind";
+    me.idpath = "me.pcidir/me.bind/new_id";
+    @_ = call me.lspci -s me.bdf -n;
+    @me.id = split(/\s+/, us[0]);
+    me.id[2] =~ tr/:/ /;
+    run @me.permit me.chown me.username: me.idpath me.bindpath me.unbindpath;
+    open my $fh, '>', me.unbindpath or delocate ("can't open me.unbindpath");
+    print $fh me.bdf;
     close $fh;
-    open( $fh, '>', $idpath) or delocate "can't open $idpath";
-    print $fh $id[2];
+    open $fh, '>', me.idpath or delocate ("can't open me.iddpath");
+    print $fh me.id[2];
     close $fh;
-    open($fh, '>', $bindpath) or delocate "can't open $bindpath";
-    print $fh $bdf;
+    open $fh, '>', me.bindpath or delocate ("can't open me.binddpath");
+    print $fh me.bdf;
     close $fh;
-    run("@permit $chown root: $idpath $bindpath $unbindpath");
+    run @me.permit me.chown root: me.idpath me.bindpath me.unbindpath;
 }
-sub gb_perm {
-    return unless scalar %Path > 0;
-    # Check sockets creation.
-    @_ = glob("$virtiofsdsocksdir*");
-    delocate "empty $virtiofsdsocksdir:" unless scalar(@_) > 0;
-
-    run("@permit $chown :$Kvm[0] @_");
-    run("@permit $chmod g=rw @_");
-}
-$_ = $guestimg;
-s;.*\/;;;
-s;\..*;;;
-my $guestname = $_;
-my $guestcfg = "$gbdir/conf/$_";
-
-delocate "Pls add: $User[0] to group: $Kvm[0]" unless $User[2] != $Kvm[2];
-
-delocate "Guest config: $guestcfg not avaliable." unless -r $guestcfg; 
-delocate "$vfiodir/vfio not avaliable." unless -c "$vfiodir/vfio";
-delocate "$socksdir/$guestname still in place." if -S "$socksdir/$guestname";
-if( ! -w $vfiodir || ! -x $vfiodir ){
-    run("@permit $chown :$Kvm[3] $vfiodir");
-    run("@permit $chmod 0775 $vfiodir");
-}
-if( ! -d $virtiofsdsocksdir || ! -w $virtiofsdsocksdir || ! -x $virtiofsdsocksdir ){
-    $tmp = int(rand(99999)) + 10000;
-    $tmp = "/var/tmp/$tmp";
-    mkdir( $tmp,0770);
-    chmod( 0770, $tmp);
-    chown($User[2],$Kvm[3],$tmp);
-    run("@permit MV $tmp $virtiofsdsocksdir");
-}
-###########################
-#     Parse config file
-###########################
-
-open(INPUT, '<', $guestcfg) or delocate "can't open $guestcfg.";
-chomp(@Config = <INPUT>);
-close(INPUT);
-foreach(@Config){
-    %Tmp = ();
-    foreach(split(/,/)){
-        # Every field
-        if(m;([^"' ]+)\s*=\s*["']{0,1}([^"' ]+)["']{0,1};){
-            $Tmp{$1} = $2;
+#############################
+#   rebind devices to module
+#############################
+sub redevice {
+    foreach( split(/\n{2}/, join ("",call me.lspci -vmk ) ) ){
+        %me.any = ();
+        foreach(split(/\n/)){
+            next unless m;([^: ]+):\s*([^ ]+)\s*;;
+            me.any{$1} = $2 unless defined me.any{$1};
+        }
+        next unless defined me.any{Device};
+        me.real{me.any{Device}} = me.any{Driver} if defined me.any{Driver};
+        me.module{me.any{Device}} = me.any{Module} if defined me.any{Module};
+    }
+    while ( (me.key,me.value) = each %me.wish ){
+        if ( not defined me.real{ me.key } ) {
+            me.value =~ tr/-/_/;
+            run @me.permit me.modprobe me.module{me.key};
+            gb_bind me.key, me.module{me.key};
             next;
         }
-        if(m;([^"' ]+)\s*["']{0,1}([^"' ]+)["']{0,1};){
-            $Tmp{$1} = $2;
+        next if me.module{me.key} eq me.real{me.key};
+        run @me.permit me.modprobe me.module{me.key};
+        gb_rebind me.key, me.real{me.key}, me.module{me.key};
+    }
+}
+#################################
+# rebind devices to vfio drivers
+#################################
+sub device {
+    foreach( split(/\n{2}/, join ("",call me.lspci -vmk ) ) ){
+        %me.any = ();
+        foreach(split(/\n/)){
+            next unless m;([^: ]+):\s*([^ ]+)\s*;;
+            me.any{$1} = $2 unless defined me.any{$1};
+        }
+        next unless defined me.any{Device};
+        me.real{me.any{Device}} = me.any{Driver} if defined me.any{Driver};
+        me.module{me.any{Device}} = me.any{Module} if defined me.any{Module};
+    }
+    while ( (me.key,me.value) = each %me.wish ){
+        if ( not defined me.real{ me.key } ) {
+            me.value =~ tr/-/_/;
+            run @me.permit me.modprobe me.value;
+            gb_bind me.key, me.value;
             next;
         }
-    }
-    # Every Line
-    if (defined($Tmp{mac}) && defined($Tmp{netdev})){
-        $Tap{$Tmp{netdev}} = $Tmp{mac};
-        $tmp = $Tmp{mac} =~ tr/://rd;
-        $Bridge{$tmp} = $Tmp{mac}; 
-        next;
-    }
-    if(defined($Tmp{path})){
-        $Tmp{path} =~ m;$guestname-(.+)\.sock;;
-        $Path{$1} = $1 =~ tr;@;\/;r;
-        next;
-    }
-    if(defined($Tmp{-device}) && defined($Tmp{host})){
-        $Wish{$Tmp{host}} = $Tmp{-device} if $Tmp{host} =~ $bdfpattern;
-        next;
+        next if me.value eq me.real{me.key};
+        if ( me.real{me.key} =~ "amdgpu|nouveau" ){
+            gb_rebind me.key, me.real{me.key}, me.value;
+            run @me.permit me.modprobe --remove me.real{me.key};
+            next;
+        }
+        gb_rebind me.key, me.real{me.key}, me.value;
     }
 }
-##################################
-#   Device setup
-##################################
-foreach(split(/(?:\n){2}/, join("",call("$lspci -vmk")))){
-    %Tmp = ();
-    foreach(split(/\n/)){
-        next unless ( m;([^: ]+):\s*([^ ]+)\s*; );
-        $Tmp{$1} = $2 unless defined $Tmp{$1}; 
+sub virtiofsd {
+    run @me.permit me.chmod 4755 me.virtiofsd;
+    while ( (me.key, me.value ) = each %me.path ){
+        next if -S "me.virtiofsdsocksdir/me.guestname-me.key.sock";
+        daemon me.virtiofsd --syslog --socket-path=me.virtiofsdsocksdir/me.guestname-me.key.sock --thread-pool-size=6 -o source=me.value; 
     }
-    next unless defined $Tmp{Device};
-    $Real{$Tmp{Device}} = $Tmp{Driver} if defined $Tmp{Driver};
-    $Module{$Tmp{Device}} = $Tmp{Module} if defined $Tmp{Module};
+    run @me.permit me.chmod 0755 me.virtiofsd;
 }
-while(my ($key, $value) = each %Wish){
-    if( not defined $Real{$key}){
-        $value =~ tr/-/_/;
-        run("@permit $modprobe ${value}");
-        gb_bind( $key, ${value});
-        next;
+sub nic {
+    foreach( call me.ip -o link show ){
+        %me.any = ();
+        @_ = split /\s+/;
+        foreach ( me.i = 3; me.i < scalar @_; me.i++ ){
+            next unless us[me.i] =~ m;permaddr|link/ether|master;;
+            me.any{us[me.i]} = us[ me.i + 1];
+        }
+        us[1] =~ tr/://d;
+        me.nic{me.any{permaddr}} = us[1] if defined me.any{permaddr};
+        me.nic{me.any{'link/ether'}} = us[1] if defined me.any{'link/ether'};
+        me.master{us[1]} = me.any{master} if defined me.any{master};
     }
+    # one physical nic belongs to only one bridge
+    foreach ( values %me.nic ){
+        defined me.config_bridge{us} || next;
+        # already has this bridge
+        me.config_bridge{us} = undef;
+    }
+    # filter out non exists physical nic from config bridge   
+    while ( (me.key, me.value) = each %me.config_bridge ){
+        next unless defined me.value;
+        me.config_bridge{me.key} = undef unless defined me.nic{me.value};
+    }
+    # filter out impossible taps from config tap
+    while ( (me.key, me.value) = each %me.tap) {
+        me.tap{me.key} = undef unless defined me.nic{me.value};
+    }
+    # create bridges that are not already in place.
+    while ( (me.key, me.value) = each %me.config_bridge ) {
+        defined me.value || next;
+        # bridge name
+        me.tmp = me.nic{me.value} // next;
+        run @me.permit me.ip address flush dev me.tmp;
+        run @me.permit me.ip link add name me.key type bridge;
+        run @me.permit me.ip link set me.key up;
+        run @me.permit me.ip link set me.tmp down;
+        run @me.permit me.ip link set me.tmp up;
+        run @me.permit me.ip link set me.tmp master me.key;
+    }
+    # filter out existing taps and bridge them.
+    foreach ( values %me.nic ){
+        defined me.tap{us} || next;
+        # already has this tap and it's also bridged.
+        if (defined me.master{us}) {
+            me.tap{us} = undef;
+            next;
+        }
+        me.tap{us} =~ tr/://d;
+        run @me.permit me.ip link set dev us up;
+        run @me.permit me.ip link set us master me.tap{us};
+    }
+    # add new taps and bridge them.
+    while ( (me.key, me.value) = each %me.tap ){
+        defined me.value || next;
+        run @me.permit me.ip tuntap add dev me.key mode tap user me.user[0];
+        run @me.permit me.ip link set dev me.key up;
+        me.value =~ tr/://d;
+        run @me.permit me.ip link set me.key master me.value;
+        me.value = undef;
+    }
+}
+sub start {
+    run @me.permit me.chmod 4755 me.qemu;
+    daemon me.qemu -chroot /var/tmp/ -runas kvm @me.config;
+    run @me.permit me.chmod 0755 me.qemu;
+}
+sub status {
+   delocate "me.socksdir/me.guestname not created" unless -S "me.socksdir/me.guestname";
+    run @me.permit me.chown me.kvm[0]:me.kvm[0] me.socksdir/me.guestname;
+    run @me.permit me.chmod ug=rw me.socksdir/me.guestname; 
+}
+#############################
+# Start VM
+#############################
+sub startvm {
+    me.cleanup = 1;
+    me.guestcfg = $ARGV[0];
+    die "me.guestcfg not text file." unless -T me.guestcfg;
+    config();
+    setup();
+    device();
+    virtiofsd();
+    nic();
+    sleep 1;
+    perm();
+    start();
+    sleep 2;
+    status();
+}
+#############################
+# Cron
+#############################
+sub cron {   
+    me.cleanup = 0;
+    foreach ( glob "me.socksdir/*"){
+        next unless -S us;
+        me.guestname = s;.*/;;rg;
+        me.guestcfg = "me.gbdir/conf/me.guestname";
+        socket(SOCK,PF_UNIX,SOCK_STREAM,0) or die "socket us"; 
+        next if connect(SOCK,sockaddr_un("us"));
+        next if defined( me.answer = <SOCK>);
+        close SOCK;
+        config();
+        redevice();
+        foreach (glob "me.virtiofsdsocksdir/* me.virtiofsdsocksdir/\.??*"){
+            next unless m;me.guestname;;
+            run @me.permit me.rm -f us;
+        } 
+        renic();
+        run @me.permit rm -f us;
+    }
+    # we trust previous procedure rebind VGA correct
+    # only do the following when booting host OS
+    return if defined me.guestname;
+    bootgpu();
+}
 
-    next if $value eq $Real{$key};
-
-    if ($Real{$key} =~ "amdgpu|nouveau"){
-        gb_rebind($key, $Real{$key}, $value);
-        run("@permit $modprobe --remove $Real{$key}");
-        next;
+sub bootgpu {
+    say "bootgpu";
+    me.cleanup = 0;
+    @_ = glob "/dev/fb*";
+    return unless scalar @_ == 0;
+    foreach( split(/\n{2}/, join ("",call me.lspci -vmk ) ) ){
+        %me.any = ();
+        foreach(split(/\n/)){
+            next unless m;([^: ]+):\s*([^ ]+)\s*;;
+            me.any{$1} = $2 unless defined me.any{$1};
+        }
+        next unless defined me.any{Device};
+        me.real{me.any{Device}} = me.any{Driver} if defined me.any{Driver};
+        me.module{me.any{Device}} = me.any{Module} if defined me.any{Module};
     }
-
-    gb_rebind($key, $Real{$key}, $value);
-}
-#print Dumper(\%Wish);
-#print Dumper(\%Real);
-#print Dumper(\%Module);
-#################################
-#        Virfiofsd by setuid
-#################################
-run("@permit $chmod 4755 $virtiofsd");
-while(my ($key,$value) = each %Path){
-    next if( -S "$virtiofsdsocksdir$guestname-${key}.sock" );
-    daemon("$virtiofsd --syslog --socket-path=$virtiofsdsocksdir$guestname-${key}.sock
-         --thread-pool-size=6 -o source=${value}");
-}
-# due to Daemon is nonblocking this will always run.
-run("@permit $chmod 0755 $virtiofsd");
-##############################
-#     Add taps and Bridges.
-##############################
-# All nic names
-foreach(call("$ip -o link show")){
-    %Tmp = ();
-    @_ = split(/\s+/);
-    foreach(my $i = 3; $i < scalar(@_); $i++){
-        next unless ( $_[$i] =~ m;permaddr|link/ether|master;);
-        $Tmp{$_[$i]} = $_[$i + 1];
+    while ( (me.key, me.value) = each %me.module){
+        next if( me.value ne me.primarygpu);
+        if ( not defined me.real{me.key}) {
+            run @me.permit me.modprobe me.primarygpu;
+            gb_bind me.key, me.primarygpu;
+            return;
+        }
+        return if( me.real{me.key} eq me.primarygpu);
+        run @me.permit me.modprobe me.primarygpu;
+        gb_rebind me.key, me.real{me.key}, me.primarygpu;
+        return;
     }
-    $_[1] =~ tr/://d;
-    $Nic{$Tmp{permaddr}} = $_[1] if defined $Tmp{permaddr};
-    $Nic{$Tmp{'link/ether'}} = $_[1] if defined $Tmp{'link/ether'};
-    $Master{$_[1]} = $Tmp{master} if defined $Tmp{master};
 }
+sub funlock {
+    me.cleanup = 0;
+    open $lockfh, '<', me.lockfile or die "can't open";    
+    flock $lockfh, (LOCK_NB | LOCK_EX) or die "can't lock";
+    us[0]();
+    flock $lockfh, LOCK_UN or die "can't unlock";
+    close $lockfh;
+}
+#############################
+# Main
+#############################
+sub usage {
+    me.progname = $0;
+    me.progname =~ s;.*/;;;
+    print <<USAGE;
+Usage: me.progname [guestconfig file] [-c | -d | -cron ] [-b | -bootgpu]
+    E.g:
+    me.progname [guestconfig]
+    me.progname -cron
+    me.progname -bootgpu
+USAGE
+    exit 1;
+}
+sub main {
+    me.cleanup = 0;
+    me.bdfpattern = qw ..\:..\..;
+    me.lockfile = qw VFIODIR;
+    me.primarygpu = qw nouveau;
+    me.gbdir = qw GUESTBRIDGEDIR;
+    me.vfiodir = qw VFIODIR;
+    me.pcidir = qw PCIDIR;
+    me.socksdir = qw SOCKSDIR;
+    me.tmpdir = '/var/tmp/';
+    me.rootdir = qw /;
+    me.username = getpwuid($<);
+    @me.user = getpwnam(me.username);
+    @me.permit = qw me.sudo;
+    @me.kvm = getpwnam('kvm');
+    @me.kvmgroup = getgrnam('kvm');
 
-# One physical nic only belongs to one bridge.
-foreach(values %Nic){
-    defined($Bridge{$_}) || next;
-    # Already has this bridge
-    $Bridge{$_} = undef;
+    usage() unless defined $ARGV[0];
+    if ( -r $ARGV[0]){ funlock \&startvm;exit;}
+    if ($ARGV[0] =~ m;-c|-d|-cron;){ funlock \&cron;exit;}
+    if ( $ARGV[0] =~ m;-b|-bootgpu;){ funlock \&bootgpu; exit;} 
+    usage();
 }
-# Create bridges that are not already in place.
-while(my ($key,$value) = each %Bridge){
-    defined $value || next;
-    # Bridge Name
-    $tmp = $Nic{$value};
-    run("@permit $ip address flush dev $tmp");
-    run("@permit $ip link add name $key type bridge");
-    run("@permit $ip link set $key up");
-    run("@permit $ip link set $tmp down");
-    run("@permit $ip link set $tmp up");
-    run("@permit $ip link set $tmp master $key");
-}
-# Filter out exist taps and bridge it.
-foreach(values %Nic){
-    defined($Tap{$_}) || next;
-    # Already has this tap and it's also bridged.
-    if(defined($Master{$_})){
-        $Tap{$_} = undef;
-        next;
-    }
-    $Tap{$_} =~ tr/://d;
-    run("@permit $ip link set dev $_ up");
-    run("@permit $ip link set $_ master $Tap{$_}");
-    $Tap{$_} = undef;
-}
-# Add new taps and bridge it.
-while(my ($key,$value) = each %Tap){
-    defined $value || next;
-    run("@permit $ip tuntap add dev $key mode tap user $User[0]");
-    run("@permit $ip link set dev $key up");
-    $value =~ tr/://d;
-    run("@permit $ip link set $key master $value");
-    $value = undef;
-}
-#print Dumper(\%Tap);
-#print Dumper(\%Nic);
-#print Dumper(\%Bridge);
-#print Dumper(\@Config);
-#print Dumper(\%Clean);
-#######################################
-# Wait until virtiofsd created sockets.
-# It's time to change permission.
-#######################################
-sleep 2;
-gb_perm();
-##################################
-#   Start vm by setuid
-##################################
-
-run("@permit $chmod 4755 $qemu");
-daemon("$qemu -chroot /var/tmp/ -runas kvm @Config");
-run("@permit $chmod 0755 $qemu");
-
-######################################
-# This check/delocate is required when
-# Daemon/run away process failed.
-######################################
-sleep 2;
-( -S "$socksdir/$guestname" ) || delocate "$socksdir/$guestname not yet created.";
-run("@permit $chown $Kvm[0]:$Kvm[0] $socksdir/$guestname");
-run("@permit $chmod ug=rw $socksdir/$guestname");
-
-#print Dumper(\%Bridge);
-#print Dumper(\%Nic);
-#print Dumper(\%Master);
-#print Dumper(\%Path);
-#__END__
+#################
+# Execution
+#################
+main();

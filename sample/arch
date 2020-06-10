@@ -1,13 +1,30 @@
+-machine q35
 -enable-kvm
--m 2048
+-m 4G
+# Use memory from host
 -mem-path /dev/hugepages
--netdev tap,id=net_GUESTNAME,ifname=tap_GUESTNAME,script=no,downscript=no,vhost=on
--device virtio-net-pci,netdev=net_GUESTNAME,mac=MAC
--drive file=GUESTIMG,format=qcow2
+# Create a memory file (should equal to -m size) shared with host virtiofsd
+# size option don't understand 4096/2048
+-object memory-backend-memfd,id=mem,size=4G,share=on
+-numa node,memdev=mem
+# Shared file system with host virtiofsd
+-chardev socket,id=char0,path=/run/virtiofsd/GUESTNAME-@opt@shareddir1.sock
+-device vhost-user-fs-pci,chardev=char0,tag=shareddir1
+-chardev socket,id=char1,path=/var/run/virtiofsd/GUESTNAME-@opt@shreddir2.sock
+-device vhost-user-fs-pci,chardev=char1,tag=shareddir2
+
+-netdev tap,id=tap_GUESTNAME,ifname=tap_GUESTNAME,script=no,downscript=no,vhost=on
+-device virtio-net-pci,netdev=tap_GUESTNAME,mac=2e:00:00:dd:de:54
+-netdev tap,id=tap1_GUESTNAME,ifname=tap1_GUESTNAME,script=no,downscript=no,vhost=on
+-device virtio-net-pci,netdev=tap1_GUESTNAME,mac=36:00:00:09:ac:31
+
+-drive file=GUESTIMG,format=FORMAT
+
 -smp cpus=4
 -cpu host
 -nographic
 -name "GUESTNAME"
 -monitor unix:/srv/kvm/socks/GUESTNAME,server,nowait
 -boot order=c
--device vfio-pci,host="00:12.0"
+-device vfio-pci,host=00:01.0
+-device vfio-pci,host=00:02.0

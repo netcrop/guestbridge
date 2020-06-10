@@ -69,6 +69,16 @@ gb.substitute()
     )
     \builtin \source <($cat<<-SUB
 
+gb.pl.install()
+{
+    $sed -e "s;ENV;$env;" -e "s;PERL;$perl;" \
+    -e "s;GUESTBRIDGEDIR;$guestbridgedir;" -e "s;VFIODIR;$vfiodir;" \
+    -e "s;VIRTIOFSDSOCKSDIR;$virtiofsdsocksdir;" \
+    -e "s;SOCKSDIR;$socksdir;" \
+    -e "s;PCIDIR;$pcidir;g" \
+    src/gb.pl | $perl src/ptr.pl > ${bindir}/gb
+    $chmod u=rwx ${bindir}/gb
+}
 gb.unbind()
 {
     local help='[bdf][unbind driver: ehci-pci/vfio-pci]'
@@ -125,57 +135,7 @@ gb.bind()
     \$permit $chown root: \${idpath} \${bindpath}
     $lspci -s \${bdf} -k
 }
-gb2.pl.install()
-{
-    $sed -e "s;ENV;$env;" -e "s;PERL;$perl;" \
-    -e "s;VERSION;$perl_version;" \
-    -e "s;GUESTBRIDGEDIR;$guestbridgedir;" -e "s;VFIODIR;$vfiodir;" \
-    -e "s;VIRTIOFSDSOCKSDIR;$virtiofsdsocksdir;" \
-    -e "s;SOCKSDIR;$socksdir;" \
-    -e "s;SUDO;$sudo;" -e "s;GROUPS;$groups;" \
-    -e "s;GPASSWD;$gpasswd;" \
-    -e "s;IP;$ip;" \
-    -e "s;BASH;$bash;g" \
-    -e "s;VIRTIOFSD;$virtiofsd;g" \
-    -e "s;CHOWN;$chown;g" \
-    -e "s;CHMOD;$chmod;g" \
-    -e "s;QEMU;$qemu_system_x86_64;g" \
-    -e "s;MV;$mv;g" \
-    -e "s;RM;$rm;g" \
-    -e "s;qw KILL;qw $kill;g" \
-    -e "s;LSPCI;$lspci;g" \
-    -e "s;MODPROBE;$modprobe;g" \
-    -e "s;PCIDIR;$pcidir;g" \
-    -e "s;BRIDGE;$bridge;g" \
-    src/gb2.pl | $ptr > ${bindir}/gb2
-    $chmod u=rwx ${bindir}/gb2
-}
-gb.pl.install()
-{
-    $sed -e "s;ENV;$env;" -e "s;PERL;$perl;" \
-    -e "s;VERSION;$perl_version;" \
-    -e "s;GUESTBRIDGEDIR;$guestbridgedir;" -e "s;VFIODIR;$vfiodir;" \
-    -e "s;VIRTIOFSDSOCKSDIR;$virtiofsdsocksdir;" \
-    -e "s;SOCKSDIR;$socksdir;" \
-    -e "s;SUDO;$sudo;" -e "s;GROUPS;$groups;" \
-    -e "s;GPASSWD;$gpasswd;" \
-    -e "s;IP;$ip;" \
-    -e "s;^#[^\!].*\$;;g" \
-    -e "s;BASH;$bash;g" \
-    -e "s;VIRTIOFSD;$virtiofsd;g" \
-    -e "s;CHOWN;$chown;g" \
-    -e "s;CHMOD;$chmod;g" \
-    -e "s;QEMU;$qemu_system_x86_64;g" \
-    -e "s;MV;$mv;g" \
-    -e "s;RM;$rm;g" \
-    -e "s;qw KILL;qw $kill;g" \
-    -e "s;LSPCI;$lspci;g" \
-    -e "s;MODPROBE;$modprobe;g" \
-    -e "s;PCIDIR;$pcidir;g" \
-    -e "s;BRIDGE;$bridge;g" \
-    src/gb.pl > ${bindir}/gb
-    $chmod u=rwx ${bindir}/gb
-}
+
 gb.query.mac()
 {
     local i nic=\${1:?[nic name]}
@@ -878,9 +838,12 @@ gb.info()
     output BDF : 00:18.0 Ethernet controller 
     # configure and install guest config file
     gb.vmreconfig vm/guestname
+    
+    # install gb.pl script
+    gb.pl.install
 
     # Start guest vm
-    gb.run [guestname] br0 enp0s1
+    gb [guestimage file]
 
     # Interact with QEMU monitor
     gb.socks [guestname] help
@@ -893,7 +856,6 @@ gb.info()
 
     # install systemd cron service.
     # enable auto release devices passed through to guest.
-    gb.fun2script
     gb.croninstall
     gb.enable
     gb.start
