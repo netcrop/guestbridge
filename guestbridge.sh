@@ -44,7 +44,7 @@ gb.substitute()
     ovmfdir='/usr/share/edk2-ovmf/x64/'
     blacklist='/etc/modprobe.d/blacklist.conf'
     seed='${RANDOM}${RANDOM}'
-    virtiofsdsocksdir='/run/virtiofsd/'
+    virtiofsdsocksdir='/run/virtiofsd'
     pcidir='/sys/bus/pci/drivers/'
     [[ -d  $ovmfdir ]] ||\
     \builtin \printf "%s\n" "${FUNCNAME}: Requre: $ovmfdir" 
@@ -135,7 +135,6 @@ gb2.pl.install()
     -e "s;SUDO;$sudo;" -e "s;GROUPS;$groups;" \
     -e "s;GPASSWD;$gpasswd;" \
     -e "s;IP;$ip;" \
-    -e "s;^#[^\!].*\$;;g" \
     -e "s;BASH;$bash;g" \
     -e "s;VIRTIOFSD;$virtiofsd;g" \
     -e "s;CHOWN;$chown;g" \
@@ -185,19 +184,24 @@ gb.query.mac()
 }
 gb.virtiofsd.stop()
 {
-#    set -o xtrace
-    local pidfile i vmsocks="\$($sudo $ls ${socksdir})"
-    declare -a Virtfsdsocks=(\$($sudo $ls ${virtiofsdsocksdir})) 
-    [[ -n \${Virtfsdsocks[0]} ]] || return
-    for i in \${Virtfsdsocks[@]};do
-        $grep -q -w "\${i%%-@*}" <<<\$vmsocks && continue
-        pidfile="$virtiofsdsocksdir/.run.virtiofsd.\${i}.pid"
-        $sudo test -r "\$pidfile" || continue
-        $sudo $kill -s SIGKILL \$($sudo $cat \$pidfile) || continue 
-        $sudo $rm -f "${virtiofsdsocksdir}/\${i}"
-        $sudo $rm -f \${pidfile}
-    done
-    set +o xtrace
+    a.perm ${virtiofsdsocksdir} root:kvm g=rwx,o= g=rw,o=
+    local i pid name vmsocks="\$($ls -A ${socksdir})"
+    for i in \$($ls -A ${virtiofsdsocksdir});do
+        name=\${i%%-@*}
+        name=\${name##*.}
+        $grep -q -w \$name <<<\$vmsocks && continue
+#    set -x
+        [[ "\${i}" =~ "pid" ]] && {
+            $sudo $kill -s SIGKILL \$(<"${virtiofsdsocksdir}/\${i}")
+            $rm -f "${virtiofsdsocksdir}/\${i}"
+            continue
+        }
+        [[ "\${i}" =~ "sock" ]] && {
+            $rm -f "${virtiofsdsocksdir}/\${i}"
+            continue
+        }
+    done 
+    set +x
 }
 gb.virtiofsd.config()
 {
@@ -212,7 +216,7 @@ gb.virtiofsd.config()
     for i in \${Sharedir[@]};do
         [[ -n "\$i" ]] || continue
         socketname="\${guestname}-\${i}.sock"
-        socketpath="${virtiofsdsocksdir}\${socketname}"
+        socketpath="${virtiofsdsocksdir}/\${socketname}"
         [[ -S \${socketpath} ]] && continue
         i=\${i//@//}
         [[ -d \${i} ]] || continue
@@ -419,7 +423,7 @@ gb.cron()
         gb.rebind2module $confdir/\${guestname} || continue 
         $rm -f \${socket}
         $rm -f ${virtiofsdsocksdir}/\${guestname}-*
-        $rm -f ${virtiofsdsocksdir}/${virtiofsdsocksdir////.}\${guestname}-*
+        $rm -f ${virtiofsdsocksdir}//${virtiofsdsocksdir////.}\${guestname}-*
     done
     # We trust previous procedure rebind VGA correct
     # Only do the following when booting host OS

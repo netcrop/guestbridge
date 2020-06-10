@@ -346,6 +346,7 @@ while(my ($key,$value) = each %Tap){
 # Wait until virtiofsd created sockets.
 # It's time to change permission.
 #######################################
+sleep 2;
 gb_perm();
 ##################################
 #   Start vm by setuid
