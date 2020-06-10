@@ -246,7 +246,7 @@ sub gb_bind {
     run @me.permit me.chown root: me.idpath me.bindpath;
 }
 sub gb_rebind {
-    delocate ("[bdf][unbind driver: ehci-pci/vfio-pci][bind driver:]") if scalar(@_) < 3;
+   delocate ("[bdf][unbind driver: ehci-pci/vfio-pci][bind driver:]") if scalar(@_) < 3;
     delocate ("invalid bdf: us[0]") unless us[0] =~ me.bdfpattern;
     me.bdf = "0000:us[0]";
     me.unbind = us[1];
@@ -368,9 +368,22 @@ sub nic {
         me.value = undef;
     }
 }
+sub start {
+    run @me.permit me.chmod 4755 me.qemu;
+    daemon me.qemu -chroot /var/tmp/ -runas kvm @me.config;
+    run @me.permit me.chmod 0755 me.qemu;
+}
+sub status {
+   delocate "me.socksdir/me.guestname not created" unless -S "me.socksdir/me.guestname";
+    run @me.permit me.chown me.kvm[0]:me.kvm[0] me.socksdir/me.guestname;
+    run @me.permit me.chmod ug=rw me.socksdir/me.guestname; 
+}
 setup();
 config();
 device();
 virtiofsd();
 nic();
 perm();
+start();
+sleep 2;
+status();
