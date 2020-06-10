@@ -45,6 +45,39 @@ sub clean {
             next;
         }
     }
+    # restore device drivers
+    while ( (me.key, me.value ) = each %me.wish ){
+        unless (defined me.real{me.key}){
+            next unless defined me.module{me.key};
+            run @me.permit me.modprobe me.module{me.key};
+            gb_bind(me.key, me.module{me.key});
+            next;
+        }
+        next if me.real{me.key} eq me.value;
+        run @me.permit me.modprobe me.module{me.key};
+        gb_rebind( me.key, me.value, me.module{me.key});
+    }    
+    # remove virtiofsd socks
+    foreach ( glob "me.socksdir/*"){
+        me.tmp = s;.*/;;rg;
+        me.socksname{me.tmp} = us;
+    }
+    foreach ( glob "me.virtiofsdsocksdir/* me.virtiofsdsocksdir/\.??*" ){
+        me.tmp = s;.*\/;;rg;
+        me.tmp =~ s;-@.*;;g;
+        me.tmp =~ s;.*\.;;g;
+        next if me.socksname{me.tmp};
+        if( m;pid$;){
+            say us;
+            open my $fh, '<', us or die "can't open";
+            me.tmp = <$fh>;
+            run @me.permit me.kill -s SIGKILL me.tmp;
+            run @me.permit me.rm -f us;
+            close $fh;
+            next;
+        }
+        run @me.permit me.rm -f us if m;sock$;;
+    }
     say "clean end";
 }
 sub dumpfilter {
@@ -105,7 +138,7 @@ sub daemon {
 sub perm {
     return unless scalar %me.path > 0;
     # check sockets creation
-    @_ = glob "me.virtiofsdsocksdir/*";
+    @_ = glob "me.virtiofsdsocksdir/* me.virtiofsdsocksdir/\.??*";
     delocate ("empty me.virtiofsdsocksdir:") unless scalar @_ > 0;
     run @me.permit me.chown :me.kvm[0] @_;
     run @me.permit me.chmod g=rw @_;
@@ -141,10 +174,12 @@ sub setup {
     me.bridge = qw BRIDGE;
     me.virtiofsd = qw VIRTIOFSD;
     me.mv = qw MV;
+    me.rm = qw RM;
+    me.kill = qw KILL;
     me.guestcfg = "me.gbdir/conf/me.guestname";
     delocate ("Pls add: me.user[0] to grp: me.kvm[0]") unless me.user[2] != me.kvm[2];
     delocate ("me.guestcfg not avaliable.") unless -r me.guestcfg;
-    delocate ("me.socksdir/me.guestname still in place") if -S "me.socksdir/me.guestname";
+    delocate "me.socksdir/me.guestname still in place" if -S "me.socksdir/me.guestname";
     if (not -w me.vfiodir or not -x me.vfiodir ){
         run @me.permit me.chown :me.kvm[3] me.vfiodir;
         run @me.permit me.chmod 0775 me.vfiodir;
@@ -155,6 +190,7 @@ sub setup {
         mkdir(me.tmp, 0770);
         chmod 0770, me.tmp;
         chown (me.user[2], me.kvm[2], me.tmp);
+        run @me.permit me.mv me.tmp me.virtiofsdsocksdir;
     }
 }
 sub config {
@@ -290,15 +326,14 @@ sub nic {
         me.config_bridge{us} = undef;
     }
     # filter out non exists physical nic from config bridge   
-    foreach ( (me.key, me.value) = each %me.config_bridge ){
+    while ( (me.key, me.value) = each %me.config_bridge ){
         next unless defined me.value;
         me.config_bridge{me.key} = undef unless defined me.nic{me.value};
     }
     # filter out impossible taps from config tap
-    foreach ( (me.key, me.value) = each %me.tap) {
+    while ( (me.key, me.value) = each %me.tap) {
         me.tap{me.key} = undef unless defined me.nic{me.value};
     }
-=head
     # create bridges that are not already in place.
     while ( (me.key, me.value) = each %me.config_bridge ) {
         defined me.value || next;
@@ -332,12 +367,10 @@ sub nic {
         run @me.permit me.ip link set me.key master me.value;
         me.value = undef;
     }
-=cut
 }
 setup();
 config();
 device();
-#virtiofsd();
+virtiofsd();
 nic();
-debug();
 perm();

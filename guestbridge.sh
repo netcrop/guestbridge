@@ -141,6 +141,8 @@ gb2.pl.install()
     -e "s;CHMOD;$chmod;g" \
     -e "s;QEMU;$qemu_system_x86_64;g" \
     -e "s;MV;$mv;g" \
+    -e "s;RM;$rm;g" \
+    -e "s;qw KILL;qw $kill;g" \
     -e "s;LSPCI;$lspci;g" \
     -e "s;MODPROBE;$modprobe;g" \
     -e "s;PCIDIR;$pcidir;g" \
@@ -165,6 +167,8 @@ gb.pl.install()
     -e "s;CHMOD;$chmod;g" \
     -e "s;QEMU;$qemu_system_x86_64;g" \
     -e "s;MV;$mv;g" \
+    -e "s;RM;$rm;g" \
+    -e "s;qw KILL;qw $kill;g" \
     -e "s;LSPCI;$lspci;g" \
     -e "s;MODPROBE;$modprobe;g" \
     -e "s;PCIDIR;$pcidir;g" \
