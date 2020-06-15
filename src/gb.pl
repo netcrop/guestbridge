@@ -47,7 +47,7 @@ sub renic {
     }
 }
 sub clean {
-    debug "clean start";
+    say "clean start";
     return if me.cleanup == 0;
     say "cleaning";
     me.cleanup = 0;
@@ -117,10 +117,10 @@ sub clean {
         }
         run @me.permit me.rm -f us if m;sock$;;
     }
-    next unless -d me.virtiofsdsocksdir;
+    return unless -d me.virtiofsdsocksdir;
     me.any = glob "me.virtiofsdsocksdir/* me.virtiofsdsocksdir/\.??*"; 
     run @me.permit me.rmdir me.virtiofsdsocksdir unless defined scalar me.any; 
-    debug "clean end";
+    say "clean end";
 }
 sub dumpfilter {
     my ($hash) = @_;
@@ -178,12 +178,12 @@ sub daemon {
     umask 0077;
     delocate ("can't setsid") if setsid() < 0;
     close STDIN;
-#    close STDOUT;
+    close STDOUT;
 #    close STDERR;
     setgid me.kvm[3];
     setuid me.kvm[2];
     open STDIN, '</dev/null';
-#    open STDOUT, '+>/dev/null';
+    open STDOUT, '+>/dev/null';
 #    open STDERR, '+>/dev/null';
     exec( split(/\s+/, us[0]) ) or delocate ("us[0]:");
     # in case child don't delocate.
@@ -366,6 +366,7 @@ sub device {
     }
 }
 sub virtiofsd {
+    return unless scalar %me.path > 0;
     run @me.permit me.chmod 4755 me.virtiofsd;
     while ( (me.key, me.value ) = each %me.path ){
         next if -S "me.virtiofsdsocksdir/me.guestname-me.key.sock";
@@ -519,6 +520,8 @@ sub bootgpu {
     }
 }
 sub funlock {
+    run @me.permit touch me.lockfile unless -e me.lockfile;
+    run @me.permit chmod a=r me.lockfile unless -r me.lockfile;
     me.cleanup = 0;
     next if defined $lockfh; 
     open $lockfh, '<', me.lockfile or die "can't open";    
@@ -547,7 +550,7 @@ sub main {
     me.cleanup = 0;
     me.debugging = 0;
     me.bdfpattern = qw ..\:..\..;
-    me.lockfile = qw VFIODIR;
+    me.lockfile = qw /run/lock/gb;
     me.primarygpu = qw nouveau;
     me.gbdir = qw GUESTBRIDGEDIR;
     me.vfiodir = qw VFIODIR;
@@ -560,7 +563,7 @@ sub main {
     @me.permit = qw me.sudo;
     @me.kvm = getpwnam('kvm');
     @me.kvmgroup = getgrnam('kvm');
-
+    me.virtiofsdsocksdir = qw /run/virtiofsd;
     usage() unless defined $ARGV[0];
     if ( -r $ARGV[0]){ funlock \&startvm;exit;}
     if ($ARGV[0] =~ m;-c|-d|-cron;){ funlock \&cron;exit;}

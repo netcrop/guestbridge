@@ -1,15 +1,16 @@
 gb.substitute()
 {
     local seed confdir moddir guestbridgedir socksdir virtiofsdsocksdir vfiodir \
-    blacklist bindir mandir ovmfdir cmd i pcidir \
+    devlist reslist blacklist bindir mandir ovmfdir cmd i pcidir \
     cmdlist='sed shred perl dirname
     basename cat ls cut bash man mktemp grep egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss file
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock groups
     lspci tee umount mount grub-mkconfig ethtool sleep modinfo kill
-    qemu-nbd lsusb realpath mkinitcpio parted less systemctl virtiofsd
-    gpasswd bridge stat ptr'
+    qemu-nbd lsusb realpath mkinitcpio parted less systemctl
+    gpasswd bridge stat'
     declare -A Devlist=(
+    [virtiofsd]=virtiofsd
     )
     cmdlist="${Devlist[@]} $cmdlist"
     for cmd in $cmdlist;do
@@ -286,14 +287,6 @@ GBSWAPGPU
     done
     set +o xtrace
 }
-gb.imageinstall()
-{
-    local image=\${1:?[qcow2 image file]}
-    local name=\${image##*/}
-    name=\${name%.*}
-    local mp=/var/tmp/\${name}
-    local config=$confdir/\${name}
-}
 gb.croninstall()
 {
     gb.cronuninstall
@@ -458,9 +451,9 @@ gb.mount.qcow2()
 }
 gb.unmount.qcow2()
 {
-    local mp=\${1:?[mount point]}
+    local mp=\${1:?[mp] unmount and/or disconnect /dev/nbd0}
     mp=\$($realpath \$mp)
-    $sudo umount -f \$mp
+    $sudo umount -fq \$mp
     $sudo $qemu_nbd -d /dev/nbd0
     $sudo $modprobe --remove --verbose nbd
 }
