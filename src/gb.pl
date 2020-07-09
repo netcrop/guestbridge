@@ -146,7 +146,7 @@ sub delocate {
         close $lockfh;
         $lockfh = undef;
     }
-#    debug();
+    debug();
     die @_;
 }
 sub run {
@@ -268,10 +268,13 @@ sub gb_bind {
     delocate ("invalid bdf:") unless us[0] =~ me.bdfpattern;
     me.bdf = "0000:us[0]";
     me.bind = us[1];
+    me.bind = 'xhci_hcd' if me.bind eq 'xhci_pci';
+    me.bind = 'xhci-hcd' if me.bind eq 'xhci-pci';
     me.bind =~ tr/_/-/ unless -d "me.pcidir/me.bind";
     me.idpath = "me.pcidir/me.bind/new_id";
     me.bindpath = "me.pcidir/me.bind/bind";
     @_ = call me.lspci -s me.bdf -n;
+    delocate "me.bdf not found." if scalar(@_) == 0;
     @me.id = split( /\s+/, us[0] );
     me.id[2] =~ tr/:/ /;
     run @me.permit me.chown me.username: me.idpath me.bindpath;
@@ -289,6 +292,8 @@ sub gb_rebind {
     me.bdf = "0000:us[0]";
     me.unbind = us[1];
     me.bind = us[2];
+    me.bind = 'xhci_hcd' if me.bind eq 'xhci_pci';
+    me.bind = 'xhci-hcd' if me.bind eq 'xhci-pci';
     me.bind =~ tr/_/-/ unless -d "me.pcidir/me.bind";
     me.unbind =~ tr/_/-/ unless -d "me.pcidir/me.unbind";
     me.unbindpath = "me.pcidir/me.unbind/unbind";
@@ -313,6 +318,7 @@ sub gb_rebind {
 #   rebind devices to module
 #############################
 sub redevice {
+#    say "redevice start";
     foreach( split(/\n{2}/, join ("",call me.lspci -vmk ) ) ){
         %me.any = ();
         foreach(split(/\n/)){
@@ -321,15 +327,23 @@ sub redevice {
         }
         next unless defined me.any{Device};
         me.real{me.any{Device}} = me.any{Driver} if defined me.any{Driver};
-        me.module{me.any{Device}} = me.any{Module} if defined me.any{Module};
+        if ( defined me.any{Module} ){
+            if (me.any{Module} eq 'xhci_pci'){
+                me.module{me.any{Device}} = 'xhci_hcd';
+            }else{
+                me.module{me.any{Device}} = me.any{Module};
+            }
+        }
     }
     while ( (me.key,me.value) = each %me.wish ){
         if ( not defined me.real{ me.key } ) {
             me.value =~ tr/-/_/;
+            next if not defined me.module{me.key};
             run @me.permit me.modprobe me.module{me.key};
             gb_bind me.key, me.module{me.key};
             next;
         }
+        next if not defined me.module{me.key};
         next if me.module{me.key} eq me.real{me.key};
         run @me.permit me.modprobe me.module{me.key};
         gb_rebind me.key, me.real{me.key}, me.module{me.key};
@@ -370,7 +384,7 @@ sub virtiofsd {
     run @me.permit me.chmod 4755 me.virtiofsd;
     while ( (me.key, me.value ) = each %me.path ){
         next if -S "me.virtiofsdsocksdir/me.guestname-me.key.sock";
-        daemon me.virtiofsd --syslog --socket-path=me.virtiofsdsocksdir/me.guestname-me.key.sock --thread-pool-size=6 -o source=me.value; 
+        daemon me.virtiofsd --syslog --socket-path=me.virtiofsdsocksdir/me.guestname-me.key.sock --thread-pool-size=8 -o source=me.value; 
     }
     run @me.permit me.chmod 0755 me.virtiofsd;
 }
@@ -548,7 +562,7 @@ USAGE
 }
 sub main {
     me.cleanup = 0;
-    me.debugging = 0;
+    me.debugging = 1;
     me.bdfpattern = qw ..\:..\..;
     me.lockfile = qw /run/lock/gb;
     me.primarygpu = qw nouveau;
@@ -556,12 +570,13 @@ sub main {
     me.vfiodir = qw VFIODIR;
     me.pcidir = qw PCIDIR;
     me.socksdir = qw SOCKSDIR;
+#    me.virtiofsd = qw /bin/virtiofsd;
     me.tmpdir = '/var/tmp/';
     me.rootdir = qw /;
     me.username = getpwuid($<);
     @me.user = getpwnam(me.username);
     @me.permit = qw me.sudo;
-    @me.kvm = getpwnam('kvm');
+    @me.kvm = getpwnam('kvm') or die "Pls create a systemd user 'kvm'.";
     @me.kvmgroup = getgrnam('kvm');
     me.virtiofsdsocksdir = qw /run/virtiofsd;
     usage() unless defined $ARGV[0];

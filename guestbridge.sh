@@ -39,6 +39,8 @@ gb.substitute()
     moddir='/etc/modules-load.d/'
     guestbridgedir='/srv/kvm/'
     socksdir='/srv/kvm/socks/'
+    vbiosdir='/srv/kvm/vbios/'
+    isodir='/srv/kvm/iso/'
     vfiodir='/dev/vfio/'
     bindir='/usr/local/bin/'
     mandir='/usr/local/man/man1'
@@ -73,12 +75,25 @@ gb.substitute()
 gb.pl.install()
 {
     $sed -e "s;ENV;$env;" -e "s;PERL;$perl;" \
-    -e "s;GUESTBRIDGEDIR;$guestbridgedir;" -e "s;VFIODIR;$vfiodir;" \
+    -e "s;GUESTBRIDGEDIR;$guestbridgedir;" \
+    -e "s;VFIODIR;$vfiodir;" \
     -e "s;VIRTIOFSDSOCKSDIR;$virtiofsdsocksdir;" \
     -e "s;SOCKSDIR;$socksdir;" \
-    -e "s;PCIDIR;$pcidir;g" \
+    -e "s;PCIDIR;$pcidir;" \
     src/gb.pl | $perl src/ptr.pl > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
+}
+gb.dirperm()
+{
+    $sudo $chown -R $USER:kvm $guestbridgedir
+    $sudo $chmod --quiet g=rw $socksdir/*   
+    $sudo $chmod --quiet gu=r $guestbridgedir/vbios/*
+    $sudo $chmod --quiet gu=r $guestbridgedir/ovmf/*_OVMF_VARS.fd
+    $sudo $chmod gu=r $guestbridgedir/ovmf/OVMF_VARS.fd
+    $sudo $chmod gu=r $guestbridgedir/ovmf/OVMF_CODE.fd
+    $sudo $chmod --quiet gu=r $guestbridgedir/iso/*
+    $sudo $chmod u=rw,g=r $guestbridgedir/conf/*
+    $sudo $chmod u=rw,g=r  $guestbridgedir/*.qcow2
 }
 gb.unbind()
 {
@@ -98,7 +113,8 @@ gb.unbind()
 }
 gb.rebind()
 {
-    local help='[bdf][unbind driver: ehci-pci/vfio-pci][bind driver: ehci-pci/vfio-pci]'
+    local help='[bdf][unbind driver: \
+    ehci-pci/vfio-pci/xhci_hcd][bind driver: ehci-pci/vfio-pci/xhci_hcd]'
     local bdf=\${1:?\$help}
     local unbind=\${2:?\$help}
     local bind=\${3:?\$help}
@@ -794,6 +810,7 @@ gb.info()
     lsmod |egrep kvm|virtio
     gb.loadmodall
     gb.reconfig
+    gb.dirperm
 
     #enable hugepages
     gb.hugepages
@@ -980,6 +997,15 @@ gb.reconfig()
     $sudo $cp $ovmfdir/OVMF_VARS.fd $guestbridgedir/ovmf/OVMF_VARS.fd 
     $sudo $chown \$USER:kvm $guestbridgedir/ovmf/OVMF_VARS.fd 
     $sudo $chmod gu=r,o= $guestbridgedir/ovmf/OVMF_VARS.fd 
+    $sudo $mkdir -p $socksdir 
+    $sudo $chown \$USER:kvm $socksdir 
+    $sudo $chmod gu=rwx,o= $socksdir 
+    $sudo $mkdir -p $isodir 
+    $sudo $chown \$USER:kvm $isodir 
+    $sudo $chmod u=rwx,g=rx,o= $isodir 
+    $sudo $mkdir -p $vbiosdir 
+    $sudo $chown \$USER:kvm $vbiosdir 
+    $sudo $chmod u=rwx,g=rx,o= $vbiosdir 
 }
 gb.hugepages()
 {
