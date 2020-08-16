@@ -7,6 +7,7 @@ my $progname = $0;
 my $fh;
 my $tmp;
 my $quotewords = '[^\;\{\}\(\)][^\;\(\)]*';
+my $identifier = '[a-zA-Z0-9_\-]';
 my %fp = ();
 my %cmd = ();
 my @path = ('/usr/local/bin','/usr/bin');

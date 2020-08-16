@@ -8,7 +8,7 @@ gb.substitute()
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock groups
     lspci tee umount mount grub-mkconfig ethtool sleep modinfo kill
     qemu-nbd lsusb realpath mkinitcpio parted less systemctl
-    gpasswd bridge stat'
+    gpasswd bridge stat date'
     declare -A Devlist=(
     [virtiofsd]=virtiofsd
     )
@@ -38,6 +38,7 @@ gb.substitute()
     confdir='/srv/kvm/conf/'
     moddir='/etc/modules-load.d/'
     guestbridgedir='/srv/kvm/'
+    devicedir='/sys/bus/pci/devices/'
     socksdir='/srv/kvm/socks/'
     vbiosdir='/srv/kvm/vbios/'
     isodir='/srv/kvm/iso/'
@@ -72,10 +73,27 @@ gb.substitute()
     )
     \builtin \source <($cat<<-SUB
 
+gb.py.install()
+{
+    [[ \${PWD##*/} == 'guestbridge' ]] || return 1 
+    local debugging=\${1:-0}
+    [[ \$debugging =~ [[:digit:]] ]] || debugging=1
+    $sed \
+    -e "s;DEBUGGING;\${debugging};" \
+    -e "s;GUESTBRIDGEDIR;$guestbridgedir;" \
+    -e "s;QEMU-IMG;$qemu_img;g" \
+    -e "s;VFIODIR;$vfiodir;" \
+    -e "s;VIRTIOFSDSOCKSDIR;$virtiofsdsocksdir;" \
+    -e "s;SOCKSDIR;$socksdir;" \
+    -e "s;PCIDIR;$pcidir;" \
+    src/gb.py > ${bindir}/guestbridge
+    $chmod u=rwx,go= $bindir/guestbridge
+}
 gb.pl.install()
 {
-    $sed -e "s;ENV;$env;" -e "s;PERL;$perl;" \
+    $sed -e "s;\!ENV;\!$env;" -e "s;PERL;$perl;" \
     -e "s;GUESTBRIDGEDIR;$guestbridgedir;" \
+    -e "s;QEMU-IMG;$qemu_img;g" \
     -e "s;VFIODIR;$vfiodir;" \
     -e "s;VIRTIOFSDSOCKSDIR;$virtiofsdsocksdir;" \
     -e "s;SOCKSDIR;$socksdir;" \
@@ -83,6 +101,54 @@ gb.pl.install()
     src/gb.pl | $perl src/ptr.pl > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
 }
+gb.snapshot.apply()
+{
+    local vmfile=\${1:?[vm qcow2] [tag name for applying]}
+    local tag=\${2:?[tag]}
+    $file -b \$vmfile | $grep -q 'QCOW2' || {
+        \builtin echo "invalid \$vmfile"
+        return 1
+    }
+    $qemu_img snapshot -a \${tag} \${vmfile}
+}
+gb.snapshot.cron()
+{
+    local tag="\$(TZ='Asia/Shanghai' $date +"%Y%m%d%H%M%S")"
+    for i in $guestbridgedir/*.qcow2;do
+        $file -b \$i| $grep -q 'QCOW2' || continue
+        $qemu_img snapshot -c \${tag} \${i}
+    done
+}
+gb.snapshot.delete()
+{
+    local vmfile=\${1:?[vm qcow2] [tag name for deleting]}
+    local tag=\${2:?[tag]}
+    $file -b \$vmfile | $grep -q 'QCOW2' || {
+        \builtin echo "invalid \$vmfile"
+        return 1
+    }
+    $qemu_img snapshot -d \${tag} \${vmfile}
+}
+gb.snapshot.list()
+{
+    local vmfile=\${1:?[vm qcow2]}
+    $file -b \$vmfile | $grep -q 'QCOW2' || {
+        \builtin echo "invalid \$vmfile"
+        return 1
+    }
+    $qemu_img snapshot -l \${vmfile}
+}
+gb.snapshot.tag()
+{
+    local tag=\$(TZ='Asia/Shanghai' $date +"%Y%m%d%H%M%S").snapshot
+    local vmfile=\${1:?[vm qcow2]}
+    $file -b \$vmfile | $grep -q 'QCOW2' || {
+        \builtin echo "invalid \$vmfile"
+        return 1
+    }
+    $qemu_img snapshot -c \${tag} \${vmfile}
+}
+
 gb.dirperm()
 {
     $sudo $chown -R $USER:kvm $guestbridgedir
@@ -94,6 +160,21 @@ gb.dirperm()
     $sudo $chmod --quiet gu=r $guestbridgedir/iso/*
     $sudo $chmod u=rw,g=r $guestbridgedir/conf/*
     $sudo $chmod u=rw,g=r  $guestbridgedir/*.qcow2
+}
+gb.checkreset()
+{
+#    set -x
+    local help='[bdf]'
+    local bdf=\${1:?\$help}
+    bdf="0000:\${bdf}"
+    [[ \$UID == 0 ]] || local permit=$sudo
+    [[ -f $devicedir/\${bdf}/reset ]] || {
+        \builtin echo "not resetable \${bdf}, require manual reset."
+        set +x
+        return
+    }
+    \builtin echo "resetable \${bdf}"
+    set +x
 }
 gb.unbind()
 {
@@ -853,6 +934,9 @@ gb.info()
     gb.pl.install
 
     # Start guest vm
+    # this script will first create a snapshot tag for this vm
+    # and will not start vm if the /run/lock/backup exits.
+    # the /run/lock/backup indicate the vm backup process is in progress.
     gb [guestimage file]
 
     # Interact with QEMU monitor
@@ -878,8 +962,11 @@ gb.info()
     # Leave qemu monitor inside telnet
        ^]
        telnet> quit
+    # Guest audio enable MSI Capabilities
+    # When using vnc, network name changes
 KVMINFO
 }
+
 gb.limits()
 {
     local config=\${1:?[vm/hostname security limits.conf]}
@@ -937,12 +1024,21 @@ gb.unloadmodall()
     $sudo $modprobe --remove --verbose --all ${Mod[@]}
     $lsmod|$egrep "virtio|vhost"
 }
+gb.resize.img()
+{
+    local image=\${1:?[image][+/-size]}
+    local size=\${2:?[+/-size]}
+    local format='qcow2'
+    [[ -f \$image ]] || return
+    $qemu_img resize \$image \${size}
+    $qemu_img info \$image
+}
 gb.create.img()
 {
     local name=\${1:?[name][size][format: raw/qcow2 def:qcow2]}
     local size=\${2:?[size]}
     local format=\${3:-qcow2}
-    [[ ! -d $guestbridgedir ]] && $sudo $mkdir -p $guestbridgedir
+    [[ ! -d $guestbridgedir/ ]] && $sudo $mkdir -p $guestbridgedir
     $qemu_img create -f \${format} $guestbridgedir/\${name}.\${format} \${size}
     $sudo $chown \$USER:kvm $guestbridgedir/\${name}.\${format}
     $sudo $chmod ug=rw $guestbridgedir/\${name}.\${format}

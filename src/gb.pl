@@ -2,7 +2,7 @@
 use VERSION;
 use strict;
 use warnings qw FATAL;
-use POSIX qw setsid setgid setuid;
+use POSIX qw setsid setgid setuid tzset;
 use Data::Dumper;
 use Socket;
 use Fcntl qw :flock;
@@ -240,7 +240,7 @@ sub config {
             me.socksdir = $1;
         }
         if ( defined me.any{file} && defined me.any{format}){
-            me.guestimg = me.any{file};
+            me.guestimg{me.any{file}} = me.any{file};
         }
         if ( defined me.any{-name}){
             me.guestname = me.any{-name};
@@ -261,6 +261,13 @@ sub config {
             me.wish{me.any{host}} = me.any{-device} if me.any{host} =~ me.bdfpattern;
             next;
         }
+    }
+}
+sub snapshot {
+    me.tag = time();
+    while ((me.key, me.value) = each %me.guestimg ){
+        next unless me.key =~ 'qcow2';
+        run QEMU-IMG snapshot -c me.tag me.key;
     }
 }
 sub gb_bind {
@@ -467,7 +474,9 @@ sub startvm {
     me.cleanup = 1;
     me.guestcfg = $ARGV[0];
     die "me.guestcfg not text file." unless -T me.guestcfg;
+    die "me.backuplock busy." if -e me.backuplock;
     config();
+    snapshot();
     setup();
     device();
     virtiofsd();
@@ -565,12 +574,12 @@ sub main {
     me.debugging = 1;
     me.bdfpattern = qw ..\:..\..;
     me.lockfile = qw /run/lock/gb;
+    me.backuplock = qw /run/lock/backup;
     me.primarygpu = qw nouveau;
     me.gbdir = qw GUESTBRIDGEDIR;
     me.vfiodir = qw VFIODIR;
     me.pcidir = qw PCIDIR;
     me.socksdir = qw SOCKSDIR;
-#    me.virtiofsd = qw /bin/virtiofsd;
     me.tmpdir = '/var/tmp/';
     me.rootdir = qw /;
     me.username = getpwuid($<);
