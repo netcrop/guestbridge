@@ -1,19 +1,20 @@
 #!/bin/env -S PATH=/usr/local/bin:/usr/bin python3 -I
 import re,tempfile,resource,glob,io,subprocess,sys
 import os,socket,getpass,random,datetime,pwd,grp,hashlib
-import fcntl,stat
+import fcntl,stat,time,grp
 class Guestbridge:
     def __init__(self,*argv):
         self.message = {'-h':' print this help message.',
-        '-r': ' [ eg: "date -u"] Run cmd with args as random unprivileged user.',
+        '-s':' [vm config file] ',
         '-t':' test ',
+        '-b':' [bdf] [bind driver: ehci-pci/ohci-pci/xhci-hcd/vfio-pci] ',
         '-c':' cron ' }
         self.argv = argv
         self.args = argv[0]
         self.argc = len(self.args)
         if self.argc == 1: self.usage()
         self.option = { '-h':self.usage,'-t':self.test,
-        '-c':self.precron }
+        '-c':self.precron, '-s':self.prestartvm, '-b':self.prebind}
 
         self.hostname = socket.gethostname()
         self.uid = os.getuid()
@@ -27,22 +28,137 @@ class Guestbridge:
         self.lockfile = '/run/lock/guestbridge'
         self.backuplock = '/run/lock/backup'
         self.socksdir = 'SOCKSDIR'
+        self.vfiodir = 'VFIODIR'
+        self.virtiofsdsocksdir = 'VIRTIOFSDSOCKSDIR'
+        self.pcidir = 'PCIDIR'
         self.permit = ''
+        self.conditional = True
+        self.real = {}
+        self.module = {}
+        self.wish = {}
+        self.bdfpattern = '(..\:..\..)'
         if self.uid != 0: self.permit = 'sudo'
+
+    def prestartvm(self):
+        self.funlock(funname=self.startvm)
 
     def precron(self):
         self.funlock(funname=self.cron)
+
+    #######################################
+    # Bind 
+    #######################################
+ 
+    def prebind(self):
+        if self.argc < 4:self.usage(self.args[1])
+        self.gb_bind(bdf=self.args[2],binddriver=self.args[3])
+
+    def gb_bind(self,bdf='',binddriver=''):
+        if not binddriver:print('invalid bind driver: ' + binddriver);exit(1)
+        self.match = re.search(self.bdfpattern,bdf)
+        if self.match == None:print('invalid bdf: ' + bdf);exit(1)
+        bdf = '0000:' + bdf
+        if binddriver == 'xhci_pci':binddriver = 'xhci_hcd'
+        if binddriver == 'xhci-pci':binddriver = 'xhci-hcd'
+        if not os.path.exists(os.path.join(self.pcidir,binddriver)):
+            binddriver.replace('_','-')
+        idpath = os.path.join(self.pcidir,binddriver,'new_id')
+        bindpath = os.path.join(self.pcidir,binddriver,'bind')
+        cmd = self.permit + ' chown ' + self.username + ' ' + idpath + ' ' + bindpath
+        print(cmd)
+        cmd = 'lspci -s ' + bdf + ' -n'
+        proc = self.run(cmd,stdout=subprocess.PIPE)
+        print(proc.stdout.split()[2].replace(':',' '))
+
+    #######################################
+    # bind/rebind devices to vfio drivers
+    #######################################
+    def device(self):
+        cmd = 'lspci -vmk '
+        proc = self.run(cmd,stdout=subprocess.PIPE)
+        if proc != None:
+            self.any = proc.stdout.split('\n\n')
+        for i in self.any:
+            self.lspci = {}
+            for j in i.split('\n'):
+                (key,value) = j.split(':',1)
+                if key.strip() in self.lspci:continue
+                self.lspci[key.strip()] = value.strip()
+
+            if 'Device' not in self.lspci:continue
+            if 'Driver' in self.lspci:
+                self.real[self.lspci['Device']] = self.lspci['Driver']
+            if 'Module' in self.lspci:
+                self.module[self.lspci['Device']] = self.lspci['Module']
+        
+        for key in self.wish:
+            value = self.wish[key]
+            if key not in self.real:
+                value = value.replace('-','_')
+                cmd = self.permit + ' modprobe ' + value
+                self.run(cmd)
+                gb_bind(bdf=key,binddriver=value)
+                continue
+            self.gb_bind(bdf=key,binddriver=value)
+            if value == self.real[key]:continue
+            self.match = re.search('(adm|gpu|nouveau)',self.real[key])
+            if self.match != None:
+                print('self.gb_rebind(bdf=key,unbinddriver=self.real[key],binddriver=value)')
+                cmd = self.permit + ' modprobe --remove ' + self.real[key]
+                self.run(cmd)
+                continue
+            print('self.gb_rebind(bdf=key,unbinddriver=self.real[key],binddriver=value)')
+        
+
+    def setup(self):
+        for i in grp.getgrnam('kvm').gr_mem:
+            if self.username == i: self.conditional = False
+        if self.conditional == True:
+            print('Pls add ' + self.username + ' to grp: kvm')
+            exit(1)
+        filepath = os.path.join(self.socksdir + self.guestname)
+        if os.path.exists(filepath): 
+            print(filepath + ' still in place.')
+            exit(1)
+        # oct 0o40770 is equal to int 16888
+        if os.stat(self.virtiofsdsocksdir).st_mode != 16888: 
+            cmd = self.permit + ' chmod 0770 ' + self.virtiofsdsocksdir
+            self.run(cmd)
+        if grp.getgrnam('kvm').gr_gid != os.stat(self.virtiofsdsocksdir).st_gid:
+            cmd=self.permit + ' chown ' + self.username + ':kvm '+self.virtiofsdsocksdir
+            self.run(cmd)
+        for i in self.mountpath:
+            if os.path.exists(i):continue
+            print(i + 'missing')
+            exit(1)
+
+    def snapshot(self):
+        tag = int(time.time())
+        for i in self.guestimg:
+            cmd = 'qemu-img snapshot -c ' + str(tag) + ' ' + i
+            self.run(cmd)
+
+    def startvm(self):
+        if self.argc < 3: self.usage(self.args[1])
+        if self.argc >= 3: self.guestcfg = self.args[2]
+        self.match = re.search('(qcow2|raw|img)',self.guestcfg) 
+        if self.match:print('invalid config: ' + self.guestcfg);return 1 
+        if os.path.exists(self.backuplock):print(self.backuplock + ' busy.');return 1
+        self.config()
+#        self.snapshot()
+        self.setup()
+        self.device()
 
     def config(self):
         with open(self.guestcfg,'r') as fh:
             lines = fh.read().split('\n')
         self.tap = {}
-        self.wish = {}
+        self.guestimg = {}
         self.socketpath = {}
         self.mountpath = {}
         self.config_bridge = {}
         self.pattern = {'guestname':'^-name\s+["\']{0,1}([^"\' ]+)["\']{0,1}'}
-        self.pattern['guestimg'] ='^-drive\s+file=([^"\-\', ]+),' 
+        self.pattern['guestimg'] ='^-drive\s+file=([^"\', ]+),' 
         self.pattern['tap'] = '^-device\s+.*netdev=([^"\', ]+),\s*mac=([^"\' ]+)'
         self.pattern['socketpath'] = '^-chardev\s+socket,.*path=([^"\', ]+)'
         self.pattern['mountpath'] = '^-chardev\s+socket,.*path=[^\@]+([^"\', ]+).sock'
@@ -54,12 +170,10 @@ class Guestbridge:
                     self.guestname = self.match.group(1)
                     self.pattern['guestname'] = ''
                     continue
-            if self.pattern['guestimg']:
-                self.match = re.search(self.pattern['guestimg'],l)
-                if self.match:
-                    self.guestimg = self.match.group(1)
-                    self.pattern['guestimg'] = ''
-                    continue
+            self.match = re.search(self.pattern['guestimg'],l)
+            if self.match:
+                self.guestimg[self.match.group(1)] = self.match.group(1)
+                continue
             self.match = re.search(self.pattern['tap'],l)
             if self.match:
                 self.tap[self.match.group(1)] = self.match.group(2)

@@ -8,7 +8,7 @@ gb.substitute()
     qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock groups
     lspci tee umount mount grub-mkconfig ethtool sleep modinfo kill
     qemu-nbd lsusb realpath mkinitcpio parted less systemctl
-    gpasswd bridge stat date'
+    gpasswd bridge stat date setpci'
     declare -A Devlist=(
     [virtiofsd]=virtiofsd
     )
@@ -182,55 +182,140 @@ gb.unbind()
     local bdf=\${1:?\$help}
     local unbind=\${2:?\$help}
     bdf="0000:\${bdf}"
-    [[ \$($id -u) == 0 ]] || local permit=$sudo
+    [[ \${UID} == 0 ]] || local permit=$sudo
 #    set -x
     [[ -d "${pcidir}/\${unbind}/" ]] || unbind=\${unbind/_/-}
+    [[ -d "${pcidir}\${unbind}/" ]] || {
+        \builtin echo "non exists: ${pcidir}\${unbind}/"
+        return 1
+    }
     local unbindpath="${pcidir}/\${unbind}/unbind"
-    \$permit $chown $USER: \${unbindpath}
-    \builtin echo \${bdf} > \${unbindpath} 2>/dev/null
-    \$permit $chown root: \${unbindpath}
+    [[ -e \${unbindpath} ]] && {
+        \$permit $chown \$USER:\$USER \${unbindpath}
+        \builtin echo "\${bdf}" > \${unbindpath} 2>/dev/null 
+        \$permit $chown root:root \${unbindpath}
+    }
     $lspci -k -s \${bdf}
+    set +x
+}
+gb.rescan.pciport()
+{
+    local help='[pcie port path: eg./sys/devices/pci0000:00/0000:00:1c.7]'
+    local portpath=\${1:?\$help}
+    local rescanpath=\${portpath}/rescan
+    [[ \${UID} == 0 ]] || local permit=$sudo
+    set -x
+    [[ -e \${rescanpath} ]] && {
+        \$permit $chown \$USER:\$USER \${rescanpath}
+        \builtin echo "1" > \${rescanpath} 2>/dev/null 
+        \$permit $chown root:root \${rescanpath}
+    }
+    set +x
+}
+gb.pci.capabilities()
+{
+    $setpci --dumpregs|$less
+}
+gb.reset.device()
+{
+    local help='[bdf: NN:NN.N]'
+    local bdf=\${1:?\$help}
+    bdf="0000:\${bdf}"
+    local bdfpath="\$($realpath ${devicedir}\${bdf})"
+    [[ \${UID} == 0 ]] || local permit=$sudo
+    set -x
+    [[ -d \${bdfpath} ]] || {
+        \builtin echo "non exist: \${bdfpath}"
+        return 1
+    }
+    local portpath="\$($dirname \${bdfpath})"
+    local port=\$($basename \${portpath})
+    local removepath=\${bdfpath}/remove
+    [[ -e \${removepath} ]] && {
+        \$permit $chown \$USER:\$USER \${removepath}
+        \builtin echo "1" > \${removepath} 2>/dev/null 
+    }
+    local on="\$($setpci -s \${port} BRIDGE_CONTROL)"
+    local off=\$(\builtin printf "%04x" \$(("0x\$on" | 0x40)))
+    \$permit $setpci -s \${port} 3e.w=\${off}
+    $sleep 0.1
+    \$permit $setpci -s \${port} 3e.w=\${on}
+    $sleep 0.5
+    local rescanpath=\${portpath}/rescan
+    [[ -e \${rescanpath} ]] && {
+        \$permit $chown \$USER:\$USER \${rescanpath}
+        \builtin echo "1" > \${rescanpath} 2>/dev/null 
+        \$permit $chown root:root \${rescanpath}
+    }
     set +x
 }
 gb.rebind()
 {
-    local help='[bdf][unbind driver: \
-    ehci-pci/vfio-pci/xhci_hcd][bind driver: ehci-pci/vfio-pci/xhci_hcd]'
+    local help='[bdf: NN:NN.N] [unbind driver: ehci-pci/vfio-pci/xhci_hcd/ohci-pci]
+    [bind driver: ehci-pci/vfio-pci/xhci_hcd/ohci-pci]'
     local bdf=\${1:?\$help}
     local unbind=\${2:?\$help}
     local bind=\${3:?\$help}
     bdf="0000:\${bdf}"
-    [[ \$($id -u) == 0 ]] || local permit=$sudo
+    [[ \${UID} == 0 ]] || local permit=$sudo
 #    set -x
     [[ -d "${pcidir}\${unbind}/" ]] || unbind=\${unbind/_/-}
+    [[ -d "${pcidir}\${unbind}/" ]] || {
+        \builtin echo "non exists: ${pcidir}\${unbind}/"
+        return 1
+    }
     [[ -d "${pcidir}\${bind}/" ]] || bind=\${bind/_/-}
+    [[ -d "${pcidir}\${bind}/" ]] || {
+       \builtin echo "non exists: ${pcidir}\${bind}/"
+        return 1
+    }
     local idpath="${pcidir}\${bind}/new_id"
     local unbindpath="${pcidir}\${unbind}/unbind"
     local bindpath="${pcidir}\${bind}/bind"
     local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
-    \$permit $chown $USER: \${idpath} \${bindpath} \${unbindpath}
-    \builtin echo \${bdf} > \${unbindpath} 2>/dev/null
-    \builtin echo "\${id/:/ }" > \${idpath} 2>/dev/null
-    \builtin echo "\${bdf}" > \${bindpath} 2>/dev/null
-    \$permit $chown root: \${idpath} \${bindpath} \${unbindpath}
+    [[ -e \${unbindpath} ]] && {
+        \$permit $chown \$USER:\$USER \${unbindpath}
+        \builtin echo "\${bdf}" > \${unbindpath} 2>/dev/null 
+        \$permit $chown root:root \${unbindpath}
+    }
+    [[ -e \${idpath} ]] && {
+        \$permit $chown \$USER:\$USER \${idpath} 
+        \builtin echo "\${id/:/ }" > \${idpath} 2> /dev/null 
+        \$permit $chown root:root \${idpath}
+    }
+    [[ -e \${bindpath} ]] && {
+        \$permit $chown \$USER:\$USER \${bindpath}
+        \builtin echo "\${bdf}" > \${bindpath} 2> /dev/null 
+        \$permit $chown root:root \${bindpath}
+    }
     $lspci -s \${bdf} -k
     set +x
 }
 gb.bind()
 {
-    local help='[bdf][bind driver: ehci-pci/vfio-pci]'
+    local help='[bdf][bind driver: ehci-pci/ohci-pci/xhci-hcd/vfio-pci]'
     local bdf=\${1:?\$help}
     local bind=\${2:?\$help}
     bdf="0000:\${bdf}"
     [[ \$($id -u) == 0 ]] || local permit=$sudo
     [[ -d "${pcidir}\${bind}/" ]] || bind=\${bind/_/-}
+    [[ -d "${pcidir}\${bind}/" ]] || {
+       \builtin echo "non exists: ${pcidir}\${bind}/"
+        return 1
+    }
     local idpath="${pcidir}\${bind}/new_id"
     local bindpath="${pcidir}/\${bind}/bind"
     local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
-    \$permit $chown $USER: \${idpath} \${bindpath}
-    \builtin echo "\${id/:/ }" > \${idpath} 2>/dev/null
-    \builtin echo "\${bdf}" > \${bindpath} 2>/dev/null
-    \$permit $chown root: \${idpath} \${bindpath}
+    [[ -e \${idpath} ]] && {
+        \$permit $chown \$USER:\$USER \${idpath} 
+        \builtin echo "\${id/:/ }" > \${idpath} 2> /dev/null 
+        \$permit $chown root:root \${idpath}
+    }
+    [[ -e \${bindpath} ]] && {
+        \$permit $chown \$USER:\$USER \${bindpath}
+        \builtin echo "\${bdf}" > \${bindpath} 2> /dev/null 
+        \$permit $chown root:root \${bindpath}
+    }
     $lspci -s \${bdf} -k
 }
 
@@ -990,7 +1075,7 @@ gb.loadmodall()
 gb.loadmod()
 {
     local mod=\${1:?[module to load]}
-    [[ \$($id -u) == 0 ]] || local cmd=$sudo
+    [[ \${UID} == 0 ]] || local cmd=$sudo
     \$cmd $modprobe \$mod
 }
 gb.unloadmod()

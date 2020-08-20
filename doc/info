@@ -50,8 +50,11 @@ https://wiki.debian.org/Hugepages
 #Windows virtio drivers
 https://docs.fedoraproject.org/en-US/quick-docs/creating-windows-virtual-machines-using-virtio-drivers/index.htmlhttps://docs.fedoraproject.org/en-US/quick-docs/creating-windows-virtual-machines-using-virtio-drivers/index.html
 
-USB passtrough
+# USB passtrough
 https://www.pugetsystems.com/labs/articles/Multiheaded-NVIDIA-Gaming-using-Ubuntu-14-04-KVM-585/#Step7AddUSBsupport
+
+# USB controller/PCIE pass
 =============
 Snapshot
 https://wiki.qemu.org/Features/Snapshots
+
