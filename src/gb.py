@@ -8,13 +8,16 @@ class Guestbridge:
         '-s':' [vm config file] ',
         '-t':' test ',
         '-b':' [bdf] [bind driver: ehci-pci/ohci-pci/xhci-hcd/vfio-pci] ',
+        '-u':' [bdf] [unbind driver: ehci-pci/ohci-pci/xhci-hcd/vfio-pci] ',
+        '-r':' [bdf] [unbind driver] [bind driver] : ehci-pci/ohci-pci/xhci-hcd/vfio-pci] ',
         '-c':' cron ' }
         self.argv = argv
         self.args = argv[0]
         self.argc = len(self.args)
         if self.argc == 1: self.usage()
         self.option = { '-h':self.usage,'-t':self.test,
-        '-c':self.precron, '-s':self.prestartvm, '-b':self.prebind}
+        '-c':self.precron, '-s':self.prestartvm, '-b':self.prebind,
+        '-u':self.preunbind, '-r':self.prerebind}
 
         self.hostname = socket.gethostname()
         self.uid = os.getuid()
@@ -46,6 +49,46 @@ class Guestbridge:
         self.funlock(funname=self.cron)
 
     #######################################
+    # Rebind 
+    #######################################
+ 
+    def prerebind(self):
+        if self.argc < 5:self.usage(self.args[1])
+        self.gb_rebind(bdf=self.args[2],unbinddriver=self.args[3],binddriver=self.args[4])
+
+    def gb_rebind(self,bdf='',unbinddriver='',binddriver=''):  
+        if not unbinddriver:print('invalid unbind driver: ' + unbinddriver);exit(1)
+        if not binddriver:print('invalid bind driver: ' + binddriver);exit(1)
+        self.gb_unbind(bdf,unbinddriver)
+        self.gb_bind(bdf,binddriver)
+
+    #######################################
+    # Unbind 
+    #######################################
+ 
+    def preunbind(self):
+        if self.argc < 4:self.usage(self.args[1])
+        self.gb_unbind(bdf=self.args[2],unbinddriver=self.args[3])
+
+    def gb_unbind(self,bdf='',unbinddriver=''):
+        if not unbinddriver:print('invalid unbind driver: ' + unbinddriver);exit(1)
+        self.match = re.search(self.bdfpattern,bdf)
+        if self.match == None:print('invalid bdf: ' + bdf);exit(1)
+        bdf = '0000:' + bdf
+        if not os.path.exists(os.path.join(self.pcidir,unbinddriver)):
+            unbinddriver.replace('_','-')
+        unbindpath = os.path.join(self.pcidir,unbinddriver,'unbind')
+        if not os.path.exists(unbindpath):print('non exists: ' + unbindpath);exit(1)
+        cmd = self.permit + ' chown ' + self.username + ' ' + unbindpath
+        self.run(cmd)
+        with open(unbindpath,'w') as fh:
+            print(bdf,file=fh)
+        cmd = self.permit + ' chown root ' + unbindpath
+        self.run(cmd)
+        cmd = 'lspci -s ' + bdf + ' -k'
+        self.run(cmd)
+
+    #######################################
     # Bind 
     #######################################
  
@@ -63,13 +106,20 @@ class Guestbridge:
         if not os.path.exists(os.path.join(self.pcidir,binddriver)):
             binddriver.replace('_','-')
         idpath = os.path.join(self.pcidir,binddriver,'new_id')
-        bindpath = os.path.join(self.pcidir,binddriver,'bind')
-        cmd = self.permit + ' chown ' + self.username + ' ' + idpath + ' ' + bindpath
-        print(cmd)
+        if not os.path.exists(idpath):print('non exists: ' + idpath);exit(1)
         cmd = 'lspci -s ' + bdf + ' -n'
         proc = self.run(cmd,stdout=subprocess.PIPE)
-        print(proc.stdout.split()[2].replace(':',' '))
-
+        if proc == None:print('failed: ' + cmd );exit(1)
+        id = proc.stdout.split()[2].replace(':',' ')
+        cmd = self.permit + ' chown ' + self.username + ' ' + idpath
+        self.run(cmd)
+        with open(idpath,'w') as fh:
+            print(id,file=fh)
+        cmd = self.permit + ' chown root ' + idpath
+        self.run(cmd)
+        cmd = 'lspci -s ' + bdf + ' -k'
+        self.run(cmd)
+ 
     #######################################
     # bind/rebind devices to vfio drivers
     #######################################

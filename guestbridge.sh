@@ -235,7 +235,8 @@ gb.reset.device()
         \$permit $chown \$USER:\$USER \${removepath}
         \builtin echo "1" > \${removepath} 2>/dev/null 
     }
-    local on="\$($setpci -s \${port} BRIDGE_CONTROL)"
+    # BRIDGE_CONTROL Equal to 3e.w
+    local on="\$($setpci -s \${port} 3e.w)"
     local off=\$(\builtin printf "%04x" \$(("0x\$on" | 0x40)))
     \$permit $setpci -s \${port} 3e.w=\${off}
     $sleep 0.1
@@ -1043,6 +1044,11 @@ gb.info()
     # Mount/Unmount Modify qcow2
     gb.mount.qcow2
     # Mount partitions and chroot into it.
+
+    # In case device can't take back/reset
+    # After pass through
+    # Hot reset device on pice 
+    gb.reset.device 
 
     # Leave qemu monitor inside telnet
        ^]
