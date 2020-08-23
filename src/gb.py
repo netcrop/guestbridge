@@ -41,6 +41,7 @@ class Guestbridge:
         self.module = {}
         self.wish = {}
         self.nic = {}
+        self.cin = {}
         self.master = {}
         self.bdfpattern = '(..\:..\..)'
         if self.uid != 0: self.permit = 'sudo'
@@ -76,7 +77,62 @@ class Guestbridge:
                 self.run(cmd)
                 cmd = self.permit + ' chmod g=rw ' + os.path.join(root,f)
                 self.run(cmd)
+###########################################
+# Unbridge/Untap network
+# also try to remove dangling bridge/tap
+# live bridge/tap can't be removed
+###########################################
+    def renetwork(self):
+        cmd = 'bridge link'
+        proc = self.run(cmd,stdout=subprocess.PIPE,exit_errorcode=-1)
+        if proc == None:print('failed: ' + cmd);exit(1)
+        if len(proc.stdout) == 0:
+            cmd = 'ip tuntap'
+            proc = self.run(cmd,stdout=subprocess.PIPE,exit_errorcode=-1)
+            if proc == None:print('failed: ' + cmd);exit(1)
+            for tap in proc.stdout.split('\n'):
+                cmd = self.permit + ' ip tuntap delete dev ' + tap + ' mod tap'
+                self.run(cmd)
+                return
 
+        for line in proc.stdout.split('\n'):
+            if len(line) == 0:continue
+            self.any = {}
+            records = line.split(' ')
+            for i in range(len(records)):
+                self.match = re.search('master',records[i])
+                if not self.match:continue
+                self.any[records[i]] = records[i+1]
+            records[1] = records[1].replace(':','')
+            if 'master' not in self.any:continue
+            self.nic[records[1]] = self.any['master']
+            if self.any['master'] in self.cin:
+                self.cin[self.any['master']] += ' ' + records[1]
+            else:
+                self.cin[self.any['master']] = records[1]
+        self.any = {}
+        for key,value in self.cin.items():
+            self.any = value.split(' ')
+            self.bridge = ''
+            for i in range(len(self.any)):
+                if self.any[i] in self.tap:
+                    cmd = self.permit + ' ip tuntap delete dev ' + self.any[i] 
+                    cmd += ' mod tap'
+                    self.run(cmd)
+                    continue
+                if not self.any[i] in self.nic:continue
+                if not self.bridge: self.bridge = self.any[i]
+            if i != len(self.any) - 1:continue
+            if not self.bridge:continue
+            cmd = self.permit + ' ip link set ' + self.bridge + ' nomaster'
+            self.run(cmd)
+            cmd = self.permit + ' ip link set ' + self.bridge + ' down'
+            self.run(cmd)
+            cmd = self.permit + ' ip link delete ' + key + ' type bridge'
+            self.run(cmd) 
+###########################################
+# Bridge/tap network
+###########################################
     def network(self):
         cmd = 'ip -o link show'
         proc = self.run(cmd,stdout=subprocess.PIPE,exit_errorcode=-1)
@@ -434,6 +490,15 @@ class Guestbridge:
                 except ConnectionRefusedError:pass
             self.configuration()
             self.redevice()
+            for root,dirs,files in os.walk(self.virtiofsdsocksdir):
+                for f in files:
+                    self.match = re.search(self.guestname,f)
+                    if not self.match:continue
+                    cmd = self.permit + ' rm -f ' + os.path.join(root,f)
+                    self.run(cmd)
+            self.renetwork()
+            cmd = self.permit + ' rm -f ' + filepath
+            self.run(cmd)
 
     def funlock(self,funname=print):
         if not os.path.exists(self.lockfile):
