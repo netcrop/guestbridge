@@ -309,12 +309,12 @@ gb.bind()
     local id=\$($lspci -s \${bdf} -n |$cut -d' ' -f3)
     [[ -e \${idpath} ]] && {
         \$permit $chown \$USER:\$USER \${idpath} 
-        \builtin echo "\${id/:/ }" > \${idpath} 2> /dev/null 
+        \builtin echo "\${id/:/ }" > \${idpath} 2>/dev/null 
         \$permit $chown root:root \${idpath}
     }
     [[ -e \${bindpath} ]] && {
         \$permit $chown \$USER:\$USER \${bindpath}
-        \builtin echo "\${bdf}" > \${bindpath} 2> /dev/null 
+        \builtin echo "\${bdf}" > \${bindpath} 2>/dev/null
         \$permit $chown root:root \${bindpath}
     }
     $lspci -s \${bdf} -k

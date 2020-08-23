@@ -1,11 +1,11 @@
 #!/bin/env -S PATH=/usr/local/bin:/usr/bin python3 -I
 import re,tempfile,resource,glob,io,subprocess,sys
 import os,socket,getpass,random,datetime,pwd,grp,hashlib
-import fcntl,stat,time,grp
+import fcntl,stat,time,grp,contextlib
 class Guestbridge:
     def __init__(self,*argv):
         self.message = {'-h':' print this help message.',
-        '-s':' [vm config file] ',
+        '-s':' [vm config file] startvm.',
         '-t':' test ',
         '-b':' [bdf] [bind driver: ehci-pci/ohci-pci/xhci-hcd/vfio-pci] ',
         '-u':' [bdf] [unbind driver: ehci-pci/ohci-pci/xhci-hcd/vfio-pci] ',
@@ -36,9 +36,12 @@ class Guestbridge:
         self.pcidir = 'PCIDIR'
         self.permit = ''
         self.conditional = True
+        self.config = {}
         self.real = {}
         self.module = {}
         self.wish = {}
+        self.nic = {}
+        self.master = {}
         self.bdfpattern = '(..\:..\..)'
         if self.uid != 0: self.permit = 'sudo'
 
@@ -48,6 +51,114 @@ class Guestbridge:
     def precron(self):
         self.funlock(funname=self.cron)
 
+    def status(self):
+        path =self.socksdir + '/' + self.guestname
+        if not os.path.exists(path):
+            print('missing: ' + path);exit(1)
+        cmd = self.permit + ' chown kvm:kvm ' + path
+        self.run(cmd)
+        cmd = self.permit + ' chmod gu=rw ' + path
+        self.run(cmd)
+
+    def start(self):
+        cmd = self.permit + ' chmod 4755 /usr/local/bin/qemu'
+        self.run(cmd)
+        cmd = ' qemu -chroot /var/tmp/ -runas kvm ' + ' '.join(self.config)
+        subprocess.Popen(cmd.split())
+        cmd = self.permit + ' chmod 0755 /usr/local/bin/qemu'
+        self.run(cmd)
+
+    def perm(self):
+        if len(self.mountpath) == 0:return
+        for root,dirs,files in os.walk(self.virtiofsdsocksdir):
+            for f in files:
+                cmd = self.permit + ' chown :kvm ' + os.path.join(root,f)
+                self.run(cmd)
+                cmd = self.permit + ' chmod g=rw ' + os.path.join(root,f)
+                self.run(cmd)
+
+    def network(self):
+        cmd = 'ip -o link show'
+        proc = self.run(cmd,stdout=subprocess.PIPE,exit_errorcode=-1)
+        if proc == None:print('failed: ' + cmd);exit(1)
+        for line in proc.stdout.split('\n'):
+            self.any = {}
+            records = line.split(' ')
+            for i in range(len(records)):
+                self.match = re.search('(permaddr|link/ether|master)',records[i]) 
+                if not self.match:continue
+                self.any[records[i]] = records[i+1]
+            records[1] = records[1].replace(':','')
+            if 'permaddr' in self.any:self.nic[self.any['permaddr']] = records[1]
+            if 'link/ether' in self.any:self.nic[self.any['link/ether']] = records[1]
+            if 'master' in self.any:self.master[records[1]] = self.any['master']
+
+        # One physical nic belongs to only one bridge
+        for key,value in self.nic.items():
+            if not value in self.config_bridge:continue
+            # Already has this bridge
+            self.config_bridge.pop(value)
+        # Filter out non exists physical nic from config bridge
+        for key,value in self.config_bridge.items():
+            if value in self.nic:continue
+            self.config_bridge.pop(key)
+        # Filter out impossible taps from config tap
+        for key,value in self.tap.items():
+            if value in self.nic:continue
+            self.tap.pop(key)
+        # Create bridges that are not already in place
+        for key,value in self.config_bridge.items():
+            if not value:continue
+            if not value in self.nic:continue
+            cmd = self.permit + ' ip address flush dev ' + self.nic[value] 
+            self.run(cmd)
+            cmd = self.permit + ' ip link add name ' + key + ' type bridge' 
+            self.run(cmd)
+            cmd = self.permit + ' ip link set ' + key + ' up' 
+            self.run(cmd)
+            cmd = self.permit + ' ip link set ' + self.nic[value] + ' down' 
+            self.run(cmd)
+            cmd = self.permit + ' ip link set ' + self.nic[value] + ' up' 
+            self.run(cmd)
+            cmd = self.permit + ' ip link set ' + self.nic[value] + ' master ' + key 
+            self.run(cmd)
+        # Filter out existing taps and bridge them
+        for key,value in self.nic.items():
+            if not value in self.tap:continue
+            # already has this tap and it's also bridged.
+            if value in self.master:
+                self.tap.pop(value)
+                continue
+            self.tap[value] = self.tap[value].replace(':','')
+            cmd = self.permit + ' ip link set dev ' + value + ' up'
+            self.run(cmd)
+            cmd = self.permit + ' ip link set ' + value + ' master ' + self.tap[value]
+            self.run(cmd)
+        # Add new taps and bridge them.
+        for key,value in self.tap.items():
+            cmd = self.permit + ' ip tuntap add dev ' + key + ' mode tap user ' + self.username
+            self.run(cmd)
+            cmd = self.permit + ' ip link set dev ' + key + ' up'
+            self.run(cmd)
+            cmd = self.permit + ' ip link set ' + key + ' master ' + value.replace(':','')
+            self.run(cmd)
+
+    #######################################
+    # Virtiofsd 
+    #######################################
+    def virtiofsd(self):
+        if len(self.mountpath) == 0:return
+        cmd = self.permit + ' chmod 4755 /bin/virtiofsd'
+        self.run(cmd)
+        for i in self.mountpath:
+            sockspath = self.virtiofsdsocksdir + '/' + self.guestname + '-' + i.replace('/','@') + '.sock'
+            if os.path.exists(sockspath):continue
+            cmd = '/bin/virtiofsd --syslog --socket-path=' + sockspath 
+            cmd += ' --thread-pool-size=8 -o source=' + i
+            subprocess.Popen(cmd.split())
+        cmd = self.permit + ' chmod 0755 /bin/virtiofsd'
+        self.run(cmd)
+ 
     #######################################
     # Rebind 
     #######################################
@@ -81,8 +192,10 @@ class Guestbridge:
         if not os.path.exists(unbindpath):print('non exists: ' + unbindpath);exit(1)
         cmd = self.permit + ' chown ' + self.username + ' ' + unbindpath
         self.run(cmd)
-        with open(unbindpath,'w') as fh:
-            print(bdf,file=fh)
+        try:
+            with open(unbindpath,'w') as fh:
+                print(bdf,file=fh)
+        except:pass
         cmd = self.permit + ' chown root ' + unbindpath
         self.run(cmd)
         cmd = 'lspci -s ' + bdf + ' -k'
@@ -103,32 +216,87 @@ class Guestbridge:
         bdf = '0000:' + bdf
         if binddriver == 'xhci_pci':binddriver = 'xhci_hcd'
         if binddriver == 'xhci-pci':binddriver = 'xhci-hcd'
+
         if not os.path.exists(os.path.join(self.pcidir,binddriver)):
-            binddriver.replace('_','-')
+            binddriver = binddriver.replace('_','-')
+        driverpath = os.path.join(self.pcidir,binddriver)
         idpath = os.path.join(self.pcidir,binddriver,'new_id')
         if not os.path.exists(idpath):print('non exists: ' + idpath);exit(1)
         cmd = 'lspci -s ' + bdf + ' -n'
         proc = self.run(cmd,stdout=subprocess.PIPE)
         if proc == None:print('failed: ' + cmd );exit(1)
         id = proc.stdout.split()[2].replace(':',' ')
-        cmd = self.permit + ' chown ' + self.username + ' ' + idpath
+
+        cmd = self.permit + ' chown ' + self.username 
+        cmd += ':' + self.username + ' ' + idpath
         self.run(cmd)
-        with open(idpath,'w') as fh:
-            print(id,file=fh)
-        cmd = self.permit + ' chown root ' + idpath
+        try:
+            with open(idpath,'w') as fh:
+                print(id,file=fh)
+        except:pass
+        cmd = self.permit + ' chown root:root ' + idpath
+        self.run(cmd)
+
+        bindpath = os.path.join(os.path.join(self.pcidir,binddriver,'bind'))
+        if not os.path.exists(bindpath):print('non exists: ' + bindpath);exit(1)
+        cmd = self.permit + ' chown ' + self.username 
+        cmd += ':' + self.username + ' ' + bindpath
+        self.run(cmd)
+        try:
+            with open(bindpath,'w') as fh:
+                print(bdf,file=fh)
+        except:pass
+        cmd = self.permit + ' chown root ' + bindpath
         self.run(cmd)
         cmd = 'lspci -s ' + bdf + ' -k'
         self.run(cmd)
- 
+
+    ########################################
+    # bind/rebind devices to original drivers
+    #######################################
+    def redevice(self):
+        cmd = 'lspci -vmk '
+        proc = self.run(cmd,stdout=subprocess.PIPE)
+        if proc == None:exit(1)
+        for i in proc.stdout.split('\n\n'):
+            self.lspci = {}
+            for j in i.split('\n'):
+                (key,value) = j.split(':',1)
+                if key.strip() in self.lspci:continue
+                self.lspci[key.strip()] = value.strip()
+            if 'Device' not in self.lspci:continue
+            if 'Driver' in self.lspci:
+                self.real[self.lspci['Device']] = self.lspci['Driver']
+            if 'Module' not in self.lspci:continue
+            if self.lspci['Module'] == 'xhci_pci':
+                self.module[self.lspci['Device']] = 'xhci_hcd'
+            else:
+                self.module[self.lspci['Device']] = self.lspci['Module']
+        for key,value in self.wish.items():
+            if key not in self.real:
+                value = value.replace('-','_')
+                if key not in self.module: continue
+                cmd = self.permit + ' modprobe ' + self.module[key]
+                self.run(cmd)
+                print(key,self.module[key])
+                self.gb_bind(bdf=key,binddriver=self.module[key])
+                continue
+            if key not in self.module:
+                self.gb_unbind(bdf=key,unbinddriver=self.real[key])
+                continue
+            if self.module[key] == self.real[key]:continue
+            cmd = self.permit + ' modprobe ' + self.module[key]
+            self.run(cmd)
+            self.gb_rebind(bdf=key,unbinddriver=self.real[key],binddriver=self.module[key])
+
     #######################################
     # bind/rebind devices to vfio drivers
     #######################################
     def device(self):
         cmd = 'lspci -vmk '
         proc = self.run(cmd,stdout=subprocess.PIPE)
-        if proc != None:
-            self.any = proc.stdout.split('\n\n')
-        for i in self.any:
+        if proc == None:exit(1)
+        for i in proc.stdout.split('\n\n'):
             self.lspci = {}
             for j in i.split('\n'):
                 (key,value) = j.split(':',1)
@@ -147,17 +315,17 @@ class Guestbridge:
                 value = value.replace('-','_')
                 cmd = self.permit + ' modprobe ' + value
                 self.run(cmd)
-                gb_bind(bdf=key,binddriver=value)
+                self.gb_bind(bdf=key,binddriver=value)
                 continue
             self.gb_bind(bdf=key,binddriver=value)
             if value == self.real[key]:continue
             self.match = re.search('(adm|gpu|nouveau)',self.real[key])
             if self.match != None:
-                print('self.gb_rebind(bdf=key,unbinddriver=self.real[key],binddriver=value)')
+                self.gb_rebind(bdf=key,unbinddriver=self.real[key],binddriver=value)
                 cmd = self.permit + ' modprobe --remove ' + self.real[key]
                 self.run(cmd)
                 continue
-            print('self.gb_rebind(bdf=key,unbinddriver=self.real[key],binddriver=value)')
+            self.gb_rebind(bdf=key,unbinddriver=self.real[key],binddriver=value)
         
 
     def setup(self):
@@ -170,6 +338,9 @@ class Guestbridge:
         if os.path.exists(filepath): 
             print(filepath + ' still in place.')
             exit(1)
+        if not os.path.exists(self.virtiofsdsocksdir):
+            cmd = self.permit + ' mkdir -p ' + self.virtiofsdsocksdir
+            self.run(cmd)
         # oct 0o40770 is equal to int 16888
         if os.stat(self.virtiofsdsocksdir).st_mode != 16888: 
             cmd = self.permit + ' chmod 0770 ' + self.virtiofsdsocksdir
@@ -194,14 +365,21 @@ class Guestbridge:
         self.match = re.search('(qcow2|raw|img)',self.guestcfg) 
         if self.match:print('invalid config: ' + self.guestcfg);return 1 
         if os.path.exists(self.backuplock):print(self.backuplock + ' busy.');return 1
-        self.config()
+        self.configuration()
 #        self.snapshot()
         self.setup()
         self.device()
+        self.virtiofsd()
+        self.network()
+        time.sleep(1)
+        self.perm()
+        self.start()
+        time.sleep(2)
+        self.status()
 
-    def config(self):
+    def configuration(self):
         with open(self.guestcfg,'r') as fh:
-            lines = fh.read().split('\n')
+            self.config = fh.read().split('\n')
         self.tap = {}
         self.guestimg = {}
         self.socketpath = {}
@@ -213,7 +391,7 @@ class Guestbridge:
         self.pattern['socketpath'] = '^-chardev\s+socket,.*path=([^"\', ]+)'
         self.pattern['mountpath'] = '^-chardev\s+socket,.*path=[^\@]+([^"\', ]+).sock'
         self.pattern['wish'] = '^-device\s+([^"\', ]+),\s*host=([^"\', ]+)'
-        for l in lines:
+        for l in self.config:
             if self.pattern['guestname']:
                 self.match = re.search(self.pattern['guestname'],l)
                 if self.match:
@@ -245,17 +423,17 @@ class Guestbridge:
 
     def cron(self):
         for guestname in os.listdir(self.socksdir):
-            answer = ''
             self.guestcfg = os.path.join(self.gbdir + '/conf/' + guestname)
             filepath = os.path.join(self.socksdir,guestname)
             if not stat.S_ISSOCK(os.stat(filepath).st_mode):continue 
             with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
-                s.connect(filepath)
-                s.send(b'info name')
-                answer = s.recv(1024)
-                s.close()
-#            if answer:continue
-            self.config()
+                try:
+                    s.connect(filepath)
+                    s.close()
+                    continue
+                except ConnectionRefusedError:pass
+            self.configuration()
+            self.redevice()
 
     def funlock(self,funname=print):
         if not os.path.exists(self.lockfile):
@@ -330,6 +508,9 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         guestbridge.debug(info='user ctrl-C')
     finally:
+        if os.path.exists(guestbridge.lockfile):
+            cmd = guestbridge.permit + ' unlink ' + guestbridge.lockfile
+            guestbridge.run(cmd)
         guestbridge.debug(info='session finally end')
         for key,value in guestbridge.__dict__.items():
             if isinstance(value,io.TextIOWrapper):
