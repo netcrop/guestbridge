@@ -1,7 +1,7 @@
 #!/bin/env -S PATH=/usr/local/bin:/usr/bin python3 -I
 import re,tempfile,resource,glob,io,subprocess,sys
 import os,socket,getpass,random,datetime,pwd,grp,hashlib
-import fcntl,stat,time,grp,contextlib
+import fcntl,stat,time,grp
 class Guestbridge:
     def __init__(self,*argv):
         self.message = {'-h':' print this help message.',
@@ -79,22 +79,11 @@ class Guestbridge:
                 self.run(cmd)
 ###########################################
 # Unbridge/Untap network
-# also try to remove dangling bridge/tap
-# live bridge/tap can't be removed
 ###########################################
     def renetwork(self):
         cmd = 'bridge link'
         proc = self.run(cmd,stdout=subprocess.PIPE,exit_errorcode=-1)
         if proc == None:print('failed: ' + cmd);exit(1)
-        if len(proc.stdout) == 0:
-            cmd = 'ip tuntap'
-            proc = self.run(cmd,stdout=subprocess.PIPE,exit_errorcode=-1)
-            if proc == None:print('failed: ' + cmd);exit(1)
-            for tap in proc.stdout.split('\n'):
-                cmd = self.permit + ' ip tuntap delete dev ' + tap + ' mod tap'
-                self.run(cmd)
-                return
-
         for line in proc.stdout.split('\n'):
             if len(line) == 0:continue
             self.any = {}
@@ -112,6 +101,8 @@ class Guestbridge:
                 self.cin[self.any['master']] = records[1]
         self.any = {}
         for key,value in self.cin.items():
+            self.match = re.search(self.guestname,value)
+            if not self.match:continue
             self.any = value.split(' ')
             self.bridge = ''
             for i in range(len(self.any)):
@@ -254,8 +245,8 @@ class Guestbridge:
         except:pass
         cmd = self.permit + ' chown root ' + unbindpath
         self.run(cmd)
-        cmd = 'lspci -s ' + bdf + ' -k'
-        self.run(cmd)
+#        cmd = 'lspci -s ' + bdf + ' -k'
+#        self.run(cmd)
 
     #######################################
     # Bind 
@@ -304,8 +295,8 @@ class Guestbridge:
         except:pass
         cmd = self.permit + ' chown root ' + bindpath
         self.run(cmd)
-        cmd = 'lspci -s ' + bdf + ' -k'
-        self.run(cmd)
+#        cmd = 'lspci -s ' + bdf + ' -k'
+#        self.run(cmd)
 
     ########################################
     # bind/rebind devices to original drivers
