@@ -101,7 +101,7 @@ gb.pl.install()
     src/gb.pl | $perl src/ptr.pl > ${bindir}/gb
     $chmod u=rwx ${bindir}/gb
 }
-gb.snapshot.apply()
+gb.snapshot.restore()
 {
     local vmfile=\${1:?[vm qcow2] [tag name for applying]}
     local tag=\${2:?[tag]}
@@ -979,6 +979,9 @@ gb.info()
     gb.reconfig
     gb.dirperm
 
+    ##########################################
+    # Only for pci pass through via IOMMU
+    ##########################################
     #enable hugepages
     gb.hugepages
     # Enable IOMMU

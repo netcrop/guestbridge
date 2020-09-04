@@ -23,7 +23,6 @@ class Guestbridge:
         self.uid = os.getuid()
         self.username = getpass.getuser()
         self.userhost = self.username + '@' + self.hostname
-        self.homedir = os.environ.get('HOME') + '/'
         self.tmpdir = '/var/tmp/'
         self.usrgrp = ''
         self.debugging = DEBUGGING
@@ -413,7 +412,7 @@ class Guestbridge:
         if self.match:print('invalid config: ' + self.guestcfg);return 1 
         if os.path.exists(self.backuplock):print(self.backuplock + ' busy.');return 1
         self.configuration()
-#        self.snapshot()
+        self.snapshot()
         self.setup()
         self.device()
         self.virtiofsd()

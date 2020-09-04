@@ -4,7 +4,7 @@ ConditionACPower=true
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/gb -cron
+ExecStart=/usr/local/bin/guestbridge -c
 Nice=19
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
