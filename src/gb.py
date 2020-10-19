@@ -262,6 +262,8 @@ class Guestbridge:
         bdf = '0000:' + bdf
         if binddriver == 'xhci_pci':binddriver = 'xhci_hcd'
         if binddriver == 'xhci-pci':binddriver = 'xhci-hcd'
+        if binddriver == 'i2c_i801':binddriver = 'i801_smbus'
+        if binddriver == 'intel_spi_pci':binddriver = 'intel-spi'
 
         if not os.path.exists(os.path.join(self.pcidir,binddriver)):
             binddriver = binddriver.replace('_','-')
@@ -404,6 +406,13 @@ class Guestbridge:
         for i in self.guestimg:
             cmd = 'qemu-img snapshot -c ' + str(tag) + ' ' + i
             self.run(cmd)
+            cmd = 'qemu-img snapshot -l ' + i
+            proc = self.run(cmd,stdout=subprocess.PIPE,exit_errorcode=-1)
+            if proc == None:print('failed: ' + cmd);exit(1)
+            oldtag = proc.stdout.split('\n')[-3].split()[1]
+            if oldtag.isdigit() == False:continue
+            cmd = 'qemu-img snapshot -d ' + oldtag + ' ' + i
+            self.run(cmd)
 
     def startvm(self):
         if self.argc < 3: self.usage(self.args[1])
@@ -479,7 +488,7 @@ class Guestbridge:
                     continue
                 except ConnectionRefusedError:pass
             self.configuration()
-            self.redevice()
+ #           self.redevice()
             for root,dirs,files in os.walk(self.virtiofsdsocksdir):
                 for f in files:
                     self.match = re.search(self.guestname,f)

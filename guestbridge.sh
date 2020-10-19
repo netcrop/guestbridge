@@ -73,6 +73,18 @@ gb.substitute()
     )
     \builtin \source <($cat<<-SUB
 
+gb.reset.show()
+{
+    for iommu_group in \$(find /sys/kernel/iommu_groups/ -maxdepth 1 -mindepth 1 -type d);do
+        echo "IOMMU group \$(basename "\$iommu_group")";
+        for device in \$(\ls -1 "\$iommu_group"/devices/); do
+            if [[ -e "\$iommu_group"/devices/"\$device"/reset ]]; then
+                echo -n "[RESET]";
+            fi
+            echo -n \$'\t';lspci -nns "\$device";
+        done
+    done
+}
 gb.py.install()
 {
     [[ \${PWD##*/} == 'guestbridge' ]] || return 1 
@@ -294,7 +306,7 @@ gb.rebind()
 }
 gb.bind()
 {
-    local help='[bdf][bind driver: ehci-pci/ohci-pci/xhci-hcd/vfio-pci]'
+    local help='[bdf][bind driver: ehci-pci/ohci-pci/xhci-hcd/vfio-pci/i801_smbus]'
     local bdf=\${1:?\$help}
     local bind=\${2:?\$help}
     bdf="0000:\${bdf}"
@@ -980,7 +992,7 @@ gb.info()
     gb.dirperm
 
     ##########################################
-    # Only for pci pass through via IOMMU
+    # Only for pci pass through via IOMMU/Intel VT-d/Amd-Vi
     ##########################################
     #enable hugepages
     gb.hugepages
@@ -1129,14 +1141,17 @@ gb.resize.img()
 }
 gb.create.img()
 {
-    local name=\${1:?[name][size][format: raw/qcow2 def:qcow2]}
-    local size=\${2:?[size]}
+    local help='[name] [size] [opt: format raw/qcow2 def:qcow2]
+    [opt: dir def: $guestbridgedir]'
+    local name=\${1:?\$help}
+    local size=\${2:?\$help}
     local format=\${3:-qcow2}
-    [[ ! -d $guestbridgedir/ ]] && $sudo $mkdir -p $guestbridgedir
-    $qemu_img create -f \${format} $guestbridgedir/\${name}.\${format} \${size}
-    $sudo $chown \$USER:kvm $guestbridgedir/\${name}.\${format}
-    $sudo $chmod ug=rw $guestbridgedir/\${name}.\${format}
-    $qemu_img info $guestbridgedir/\${name}.\${format}
+    local dir=\${4:-$guestbridgedir}
+    [[ -d \$dir ]] || $sudo $mkdir -p \$dir 
+    $qemu_img create -f \${format} \$dir/\${name}.\${format} \${size}
+    $sudo $chown \$USER:kvm \$dir/\${name}.\${format}
+    $sudo $chmod ug=rw \$dir/\${name}.\${format}
+    $qemu_img info \$dir/\${name}.\${format}
 }
 gb.img.info()
 {
@@ -1302,3 +1317,4 @@ SUB
 }
 gb.substitute
 builtin unset -f gb.substitute
+
