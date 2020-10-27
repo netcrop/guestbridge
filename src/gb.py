@@ -400,10 +400,13 @@ class Guestbridge:
             if os.path.exists(i):continue
             print(i + 'missing')
             exit(1)
-
+############################################
+# Keep/update latest 2 snapshot only.
+############################################
     def snapshot(self):
         tag = int(time.time())
         for i in self.guestimg:
+            if i.find('downloads') >= 0:continue
             cmd = 'qemu-img snapshot -c ' + str(tag) + ' ' + i
             self.run(cmd)
             cmd = 'qemu-img snapshot -l ' + i

@@ -5,12 +5,16 @@ gb.substitute()
     cmdlist='sed shred perl dirname
     basename cat ls cut bash man mktemp grep egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss file
-    qemu-img qemu-system-x86_64 modprobe lsmod socat ip flock groups
+    modprobe lsmod ip flock groups
     lspci tee umount mount grub-mkconfig ethtool sleep modinfo kill
-    qemu-nbd lsusb realpath mkinitcpio parted less systemctl
+    lsusb realpath mkinitcpio parted less systemctl
     gpasswd bridge stat date setpci'
     declare -A Devlist=(
     [virtiofsd]=virtiofsd
+    [qemu-img]=qemu-img
+    [qemu-nbd]=qemu-nbd
+    [qemu-system-x86_64]=qemu-system-x86_64
+    [socat]=socat 
     )
     cmdlist="${Devlist[@]} $cmdlist"
     for cmd in $cmdlist;do
@@ -1018,17 +1022,18 @@ gb.info()
     # List iommu group
     gb.iommu
 
-   
-    # verify binded vfio-pci devices
+    # Bind devices with/without pass through
+    # in the same iommu group
+    # Verify binded vfio-pci devices
     dmesg | egrep -i vfio_pci
-    output: vfio_pci: add [9809:1301]
+    # Output: vfio_pci: add [9809:1301]
     lspci -vmk  
     Driver: vfio-pci
 
     # Find out BDF of the Nic for pass through
     gb.iommu |egrep "Intel Corporation 82579"
-    output BDF : 00:18.0 Ethernet controller 
-    # configure and install guest config file
+    # Output BDF : 00:18.0 Ethernet controller 
+    # Configure and install guest config file
     gb.vmreconfig vm/guestname
     
     # install gb.pl script
