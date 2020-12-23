@@ -1036,8 +1036,8 @@ gb.info()
     # Configure and install guest config file
     gb.vmreconfig vm/guestname
     
-    # install gb.pl script
-    gb.pl.install
+    # install gb.py script
+    gb.py.install
 
     # Start guest vm
     # this script will first create a snapshot tag for this vm
@@ -1065,16 +1065,21 @@ gb.info()
     gb.mount.qcow2
     # Mount partitions and chroot into it.
 
-    # In case device can't take back/reset
-    # After pass through
-    # Hot reset device on pice 
-    gb.reset.device 
+    # In case device can't take back/reset, install package
+    vendor-reset-dkms-git 
 
     # Leave qemu monitor inside telnet
        ^]
        telnet> quit
     # Guest audio enable MSI Capabilities
     # When using vnc, network name changes
+
+    # Resize filesystem and partition
+    # boot arch.iso with vm.qcow2
+    cfdisk /dev/sdX
+    resize partition
+    e2fsck -f /dev/sdXY
+    resize2fs /dev/sdXY SIZE
 KVMINFO
 }
 
@@ -1158,6 +1163,20 @@ gb.create.img()
     $sudo $chmod ug=rw \$dir/\${name}.\${format}
     $qemu_img info \$dir/\${name}.\${format}
 }
+gb.convert.img()
+{
+#    set -x
+    declare -A Format=( img raw )
+    local help='[in image file] [out image file]'
+    local infile=\${1:?\$help}
+    local outfile=\${2:?\$help}
+    informat=\${infile##*.}
+    outformat=\${outfile##*.}
+    [[ -n \${Format[\$informat]} ]] && informat=\${Format[\$informat]}
+    [[ -n \${Format[\$outformat]} ]] && outformat=\${Format[\$outformat]}
+    $qemu_img convert -f \${informat} -O \${outformat} \${infile} \${outfile}
+    set +x
+}
 gb.img.info()
 {
     local img=\${1:?[img]}
@@ -1216,10 +1235,12 @@ gb.reconfig()
     $sudo $mkdir -p $vbiosdir 
     $sudo $chown \$USER:kvm $vbiosdir 
     $sudo $chmod u=rwx,g=rx,o= $vbiosdir 
+    [[ -x /usr/lib/qemu/virtiofsd ]] && \
+    $sudo $ln -s /usr/lib/qemu/virtiofsd $bindir/virtiofsd
 }
 gb.hugepages()
 {
-#    set -o xtrace
+#    set -x
     local tmpfile=/tmp/\${RANDOM}
     local kvm=\$($egrep -w kvm /etc/group|$cut -d: -f3)
     local entry="hugetlbfs /dev/hugepages hugetlbfs mode=1770,gid=\${kvm} 0 0"
@@ -1235,7 +1256,7 @@ gb.hugepages()
     $sudo $mount /dev/hugepages
     \builtin echo 5500|$sudo $tee /proc/sys/vm/nr_hugepages
     \builtin echo "vm.nr_hugepages = 5500"|$sudo $tee /etc/sysctl.d/40-hugepages.conf
-    set +o xtrace
+    set +x
 }
 gb.resetconfig()
 {

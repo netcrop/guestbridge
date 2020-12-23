@@ -103,23 +103,10 @@ class Guestbridge:
             self.match = re.search(self.guestname,value)
             if not self.match:continue
             self.any = value.split(' ')
-            self.bridge = ''
             for i in range(len(self.any)):
-                if self.any[i] in self.tap:
-                    cmd = self.permit + ' ip tuntap delete dev ' + self.any[i] 
-                    cmd += ' mod tap'
-                    self.run(cmd)
-                    continue
-                if not self.any[i] in self.nic:continue
-                if not self.bridge: self.bridge = self.any[i]
-            if i != len(self.any) - 1:continue
-            if not self.bridge:continue
-            cmd = self.permit + ' ip link set ' + self.bridge + ' nomaster'
-            self.run(cmd)
-            cmd = self.permit + ' ip link set ' + self.bridge + ' down'
-            self.run(cmd)
-            cmd = self.permit + ' ip link delete ' + key + ' type bridge'
-            self.run(cmd) 
+                if not self.any[i] in self.tap:continue
+                cmd = self.permit + ' ip tuntap delete dev ' + self.any[i] + ' mod tap'
+                self.run(cmd)
 ###########################################
 # Bridge/tap network
 ###########################################
@@ -424,7 +411,7 @@ class Guestbridge:
         if self.match:print('invalid config: ' + self.guestcfg);return 1 
         if os.path.exists(self.backuplock):print(self.backuplock + ' busy.');return 1
         self.configuration()
-        self.snapshot()
+#        self.snapshot()
         self.setup()
         self.device()
         self.virtiofsd()
@@ -491,7 +478,7 @@ class Guestbridge:
                     continue
                 except ConnectionRefusedError:pass
             self.configuration()
- #           self.redevice()
+            self.redevice()
             for root,dirs,files in os.walk(self.virtiofsdsocksdir):
                 for f in files:
                     self.match = re.search(self.guestname,f)
