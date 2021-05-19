@@ -1,7 +1,8 @@
 #!/bin/env -S PATH=/usr/local/bin:/usr/bin python3 -I
 import re,tempfile,resource,glob,io,subprocess,sys
-import os,socket,getpass,random,datetime,pwd,grp,hashlib
-import fcntl,stat,time,grp
+import os,socket,getpass,random,pwd,grp,hashlib
+import fcntl,stat,time,grp,pytz
+from datetime import datetime
 class Guestbridge:
     def __init__(self,*argv):
         self.message = {'-h':' print this help message.',
@@ -181,15 +182,15 @@ class Guestbridge:
     #######################################
     def virtiofsd(self):
         if len(self.mountpath) == 0:return
-        cmd = self.permit + ' chmod 4755 /bin/virtiofsd'
+        cmd = self.permit + ' chmod 4755 /usr/lib/qemu/virtiofsd'
         self.run(cmd)
         for i in self.mountpath:
             sockspath = self.virtiofsdsocksdir + '/' + self.guestname + '-' + i.replace('/','@') + '.sock'
             if os.path.exists(sockspath):continue
-            cmd = '/bin/virtiofsd --syslog --socket-path=' + sockspath 
+            cmd = '/usr/lib/qemu/virtiofsd --syslog --socket-path=' + sockspath 
             cmd += ' --thread-pool-size=8 -o source=' + i
             subprocess.Popen(cmd.split())
-        cmd = self.permit + ' chmod 0755 /bin/virtiofsd'
+        cmd = self.permit + ' chmod 0755 /usr/lib/qemu/virtiofsd'
         self.run(cmd)
  
     #######################################
@@ -425,6 +426,7 @@ class Guestbridge:
     def configuration(self):
         with open(self.guestcfg,'r') as fh:
             self.config = fh.read().split('\n')
+        self.rtc = {}
         self.tap = {}
         self.guestimg = {}
         self.socketpath = {}
@@ -436,7 +438,8 @@ class Guestbridge:
         self.pattern['socketpath'] = '^-chardev\s+socket,.*path=([^"\', ]+)'
         self.pattern['mountpath'] = '^-chardev\s+socket,.*path=[^\@]+([^"\', ]+).sock'
         self.pattern['wish'] = '^-device\s+([^"\', ]+),\s*host=([^"\', ]+)'
-        for l in self.config:
+        self.pattern['rtc'] = '^-rtc\s+base=["\']{0,1}([^"\', ]+)["\']{0,1}'
+        for index, l in enumerate(self.config):
             if self.pattern['guestname']:
                 self.match = re.search(self.pattern['guestname'],l)
                 if self.match:
@@ -464,6 +467,12 @@ class Guestbridge:
             self.match = re.search(self.pattern['wish'],l)
             if self.match:
                 self.wish[self.match.group(2)] = self.match.group(1)
+                continue
+            self.match = re.search(self.pattern['rtc'],l)
+            if self.match:
+                timezone = pytz.timezone(self.match.group(1))
+                self.rtc = datetime.now(timezone).strftime('%Y-%m-%dT%H:%M:%S')
+                self.config[index] = '-rtc base=' + self.rtc
                 continue
 
     def cron(self):

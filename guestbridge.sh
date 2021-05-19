@@ -71,12 +71,19 @@ gb.substitute()
     vhost_net
     vhost_vsock
     vhost_scsi
+    kvmgt
     vfio_mdev
     vfio_iommu_type1
     vfio_pci
     )
     \builtin \source <($cat<<-SUB
 
+gb.gvt.list()
+{
+    local help='[pcd addr] [domain num] e.g: /sys/devices/pci0000\:00/0000\:00\:02.0/'
+    local gvt_pci=\${1:?\$help}
+    local gvt_dom=\${2:?\$help}
+}
 gb.reset.show()
 {
     for iommu_group in \$(find /sys/kernel/iommu_groups/ -maxdepth 1 -mindepth 1 -type d);do
@@ -1236,11 +1243,12 @@ gb.reconfig()
     $sudo $chown \$USER:kvm $vbiosdir 
     $sudo $chmod u=rwx,g=rx,o= $vbiosdir 
     [[ -x /usr/lib/qemu/virtiofsd ]] && \
-    $sudo $ln -s /usr/lib/qemu/virtiofsd $bindir/virtiofsd
+    $sudo $ln -sf /usr/lib/qemu/virtiofsd $bindir/virtiofsd
 }
 gb.hugepages()
 {
 #    set -x
+    local num=2200
     local tmpfile=/tmp/\${RANDOM}
     local kvm=\$($egrep -w kvm /etc/group|$cut -d: -f3)
     local entry="hugetlbfs /dev/hugepages hugetlbfs mode=1770,gid=\${kvm} 0 0"
@@ -1254,8 +1262,8 @@ gb.hugepages()
     $sudo $cp \${tmpfile} /etc/fstab
     $sudo $umount -f /dev/hugepages
     $sudo $mount /dev/hugepages
-    \builtin echo 5500|$sudo $tee /proc/sys/vm/nr_hugepages
-    \builtin echo "vm.nr_hugepages = 5500"|$sudo $tee /etc/sysctl.d/40-hugepages.conf
+    \builtin echo \$num|$sudo $tee /proc/sys/vm/nr_hugepages
+    \builtin echo "vm.nr_hugepages = \$num"|$sudo $tee /etc/sysctl.d/40-hugepages.conf
     set +x
 }
 gb.resetconfig()
