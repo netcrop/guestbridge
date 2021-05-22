@@ -1,59 +1,59 @@
 gb.substitute()
 {
-    local seed confdir moddir guestbridgedir socksdir virtiofsdsocksdir vfiodir \
-    devlist reslist blacklist bindir mandir ovmfdir cmd i pcidir \
-    cmdlist='sed shred perl dirname
+    local cmdlist reslist devlist pkglist cmd i pkg seed \
+    confdir moddir guestbridgedir socksdir virtiofsdsocksdir vfiodir \
+    devlist reslist blacklist bindir mandir ovmfdir cmd i pcidir 
+    cmdlist=(sed shred perl dirname
     basename cat ls cut bash man mktemp grep egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss file
     modprobe lsmod ip flock groups
     lspci tee umount mount grub-mkconfig ethtool sleep modinfo kill
     lsusb realpath mkinitcpio parted less systemctl
-    gpasswd bridge stat date setpci'
-    declare -A Devlist=(
-    [virtiofsd]=virtiofsd
-    [qemu-img]=qemu-img
-    [qemu-nbd]=qemu-nbd
-    [qemu-system-x86_64]=qemu-system-x86_64
-    [socat]=socat 
-    )
-    cmdlist="${Devlist[@]} $cmdlist"
-    for cmd in $cmdlist;do
-        i=($(\builtin type -afp $cmd 2>/dev/null))
-        if [[ -z $i ]];then
-            if [[ -z ${Devlist[$cmd]} ]];then
-                reslist+=" $cmd"
-            else
-                devlist+=" $cmd"
-            fi
-        fi
+    gpasswd bridge stat date setpci)
+    devlist=(virtiofsd qemu-img qemu-nbd qemu-system-x86_64 socat)
+    pkglist=()
+    for cmd in ${cmdlist[@]};do
+        i=($(\builtin type -afp $cmd))
+        [[ -n $i ]] || {
+            \builtin printf "%s\n" "$FUNCNAME Require: $cmd"
+            return
+        }
         \builtin eval "local ${cmd//-/_}=${i:-:}"
     done
-    [[ -z $reslist ]] ||\
-    { 
-        \builtin printf "%s\n" \
-        "$FUNCNAME Require: $reslist"
+    for pkg in ${pkglist[@]};do
+        pacman -Qi $pkg >/dev/null 2>&1 && continue
+        \builtin printf "%s\n" "$FUNCNAME Require: $pkg"
         return
-    }
-    [[ -z $devlist ]] ||\
-    \builtin printf "%s\n" \
-    "$FUNCNAME Optional: $devlist"
+    done
+    for cmd in ${devlist[@]};do
+        i=($(\builtin type -afp $cmd))
+        [[ -n $i ]] || {
+            \builtin printf "%s\n" "$FUNCNAME Optional: $cmd"
+            continue
+        }
+        \builtin eval "local ${cmd//-/_}=${i:-:}"
+    done
 
-    perl_version="$($perl -e 'print $^V')"
-    confdir='/srv/kvm/conf/'
-    moddir='/etc/modules-load.d/'
-    guestbridgedir='/srv/kvm/'
-    devicedir='/sys/bus/pci/devices/'
-    socksdir='/srv/kvm/socks/'
-    vbiosdir='/srv/kvm/vbios/'
-    isodir='/srv/kvm/iso/'
-    vfiodir='/dev/vfio/'
-    bindir='/usr/local/bin/'
-    mandir='/usr/local/man/man1'
-    ovmfdir='/usr/share/edk2-ovmf/x64/'
-    blacklist='/etc/modprobe.d/blacklist.conf'
-    seed='${RANDOM}${RANDOM}'
-    virtiofsdsocksdir='/run/virtiofsd'
-    pcidir='/sys/bus/pci/drivers/'
+    local perl_version="$($perl -e 'print $^V')"
+    local vendor_perl=/usr/share/perl5/vendor_perl/
+    local libdir=/usr/local/lib
+    local includedir=/usr/local/include/
+    local bindir=/usr/local/bin/
+    local confdir='/srv/kvm/conf/'
+    local moddir='/etc/modules-load.d/'
+    local guestbridgedir='/srv/kvm/'
+    local devicedir='/sys/bus/pci/devices/'
+    local socksdir='/srv/kvm/socks/'
+    local vbiosdir='/srv/kvm/vbios/'
+    local isodir='/srv/kvm/iso/'
+    local vfiodir='/dev/vfio/'
+    local bindir='/usr/local/bin/'
+    local mandir='/usr/local/man/man1'
+    local ovmfdir='/usr/share/edk2-ovmf/x64/'
+    local blacklist='/etc/modprobe.d/blacklist.conf'
+    local seed='${RANDOM}${RANDOM}'
+    local virtiofsdsocksdir='/run/virtiofsd'
+    local pcidir='/sys/bus/pci/drivers/'
     [[ -d  $ovmfdir ]] ||\
     \builtin \printf "%s\n" "${FUNCNAME}: Requre: $ovmfdir" 
     declare -a Mod=(
@@ -76,8 +76,8 @@ gb.substitute()
     vfio_iommu_type1
     vfio_pci
     )
-    \builtin \source <($cat<<-SUB
 
+    \builtin source <($cat<<-SUB
 gb.gvt.list()
 {
     local help='[pcd addr] [domain num] e.g: /sys/devices/pci0000\:00/0000\:00\:02.0/'
@@ -1351,4 +1351,3 @@ SUB
 }
 gb.substitute
 builtin unset -f gb.substitute
-
