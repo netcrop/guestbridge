@@ -6,12 +6,12 @@ gb.substitute()
     cmdlist=(sed shred perl dirname
     basename cat ls cut bash man mktemp grep egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss file
-    modprobe lsmod ip flock groups
+    modprobe lsmod ip flock groups passwd useradd groupadd
     lspci tee umount mount grub-mkconfig ethtool sleep modinfo kill
     lsusb realpath mkinitcpio parted less systemctl
     gpasswd bridge stat date setpci)
     devlist=(virtiofsd qemu-img qemu-nbd qemu-system-x86_64 socat)
-    pkglist=()
+    pkglist=(python-pytz edk2-ovmf)
     for cmd in ${cmdlist[@]};do
         i=($(\builtin type -afp $cmd))
         [[ -n $i ]] || {
@@ -78,6 +78,29 @@ gb.substitute()
     )
 
     \builtin source <($cat<<-SUB
+
+gb.add.kvm()
+{
+    : System Group kvm Not yet exist, create it. 
+    $egrep -q -w kvm /etc/group || {
+        $sudo $groupadd --system kvm
+    }
+
+    : System User kvm Not yet exist, create it.
+    $egrep -q -w kvm /etc/passwd || {
+        $sudo $useradd --system --home-dir /run/kvm -g kvm -s /bin/nologin kvm
+        $sudo $passwd --lock kvm
+        $sudo $mkdir -p /run/kvm
+        $sudo $chown kvm:kvm /run/kvm
+        $sudo $chmod u=rwx /run/kvm
+    }
+
+    $groups | $egrep -q -w kvm && return
+
+    : Current user Not yet in Group kvm, add to it.
+    $sudo $gpasswd -a $USER kvm
+    \builtin printf "%s\n" "Require logout and login again."
+}
 gb.gvt.list()
 {
     local help='[pcd addr] [domain num] e.g: /sys/devices/pci0000\:00/0000\:00\:02.0/'
@@ -133,6 +156,13 @@ gb.snapshot.restore()
         return 1
     }
     $qemu_img snapshot -a \${tag} \${vmfile}
+}
+gb.snapshot()
+{
+    local img=\${1:?[vm qcow2]}
+    local tag="\$(TZ='Asia/Shanghai' $date +"%Y%m%d%H%M%S")"
+    $file -b \${img}| $grep -q 'QCOW2' || return
+    $qemu_img snapshot -c \${tag} \${img}  
 }
 gb.snapshot.cron()
 {
@@ -1016,7 +1046,8 @@ gb.info()
     # show pci device id
     lspci -vvn
 
-    # bind vfio-pci to pci device as kernel module.
+    # Bind vfio-pci to pci device as kernel module.
+    # Run this for eatch kernel update
     cat vm/hostname/vfio.conf
     output: options vfio-pci ids=9809:1301
     gb.modprobconfig
@@ -1128,10 +1159,10 @@ gb.modprobeconfig()
         $sudo $cp \$dir/vfio.conf /etc/modprobe.d/vfio.conf
         $sudo $chmod u=rw,go=r /etc/modprobe.d/vfio.conf
     fi
-    if [[ -r \$dir/blacklist.conf ]];then
-        $sudo $cp \$dir/blacklist.conf /etc/modprobe.d/blacklist.conf
-        $sudo $chmod u=rw,go=r /etc/modprobe.d/blacklist.conf
-    fi
+#    if [[ -r \$dir/blacklist.conf ]];then
+#        $sudo $cp \$dir/blacklist.conf /etc/modprobe.d/blacklist.conf
+#        $sudo $chmod u=rw,go=r /etc/modprobe.d/blacklist.conf
+#    fi
     [[ -r \$dir/mkinitcpio.conf ]] &&\
     gb.mkinitcpio \$dir/mkinitcpio.conf
 }
@@ -1212,11 +1243,9 @@ gb.reconfig()
     gb.resetconfig
     $sudo $mkdir -p $mandir
     $sudo $chmod 0755 $mandir
-    $sudo $cp doc/guestbridge.1 \
-    $mandir/guestbridge.1
+    $sudo $cp doc/guestbridge.1 $mandir/guestbridge.1
     $sudo $chmod 0644 $mandir/guestbridge.1 
-    $sudo $chown $USER:users \
-    $mandir/guestbridge.1
+    $sudo $chown $USER:users $mandir/guestbridge.1
     \builtin printf "%s\n" ${Mod[@]} >/tmp/guestbridge.conf
     $sudo $chmod u=r,go= /tmp/guestbridge.conf
     $sudo $mv -f /tmp/guestbridge.conf $moddir/guestbridge.conf
