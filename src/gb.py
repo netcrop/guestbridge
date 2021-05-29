@@ -11,6 +11,7 @@ class Guestbridge:
         '-b':' [bdf] [bind driver: ehci-pci/ohci-pci/xhci-hcd/vfio-pci] ',
         '-u':' [bdf] [unbind driver: ehci-pci/ohci-pci/xhci-hcd/vfio-pci] ',
         '-r':' [bdf] [unbind driver] [bind driver] : ehci-pci/ohci-pci/xhci-hcd/vfio-pci] ',
+        '-m':' new mac address ',
         '-c':' cron ' }
         self.argv = argv
         self.args = argv[0]
@@ -18,7 +19,7 @@ class Guestbridge:
         if self.argc == 1: self.usage()
         self.option = { '-h':self.usage,'-t':self.test,
         '-c':self.precron, '-s':self.prestartvm, '-b':self.prebind,
-        '-u':self.preunbind, '-r':self.prerebind}
+        '-u':self.preunbind, '-r':self.prerebind, '-m':self.newmac}
 
         self.hostname = socket.gethostname()
         self.uid = os.getuid()
@@ -44,6 +45,8 @@ class Guestbridge:
         self.cin = {}
         self.master = {}
         self.bdfpattern = '(..\:..\..)'
+        self.b10t16 = '0123456789abcdef'
+        self.macaddress = ''
         if self.uid != 0: self.permit = 'sudo'
 
     def prestartvm(self):
@@ -309,6 +312,8 @@ class Guestbridge:
             else:
                 self.module[self.lspci['Device']] = self.lspci['Module']
         for key,value in self.wish.items():
+            self.match = re.search('(amd|gpu|nouveau)',self.module[key])
+            if self.match != None:continue
             if key not in self.real:
                 value = value.replace('-','_')
                 if key not in self.module: continue
@@ -355,7 +360,7 @@ class Guestbridge:
                 continue
             self.gb_bind(bdf=key,binddriver=value)
             if value == self.real[key]:continue
-            self.match = re.search('(adm|gpu|nouveau)',self.real[key])
+            self.match = re.search('(amd|gpu|nouveau)',self.real[key])
             if self.match != None:
                 self.gb_rebind(bdf=key,unbinddriver=self.real[key],binddriver=value)
                 cmd = self.permit + ' modprobe --remove ' + self.real[key]
@@ -423,6 +428,20 @@ class Guestbridge:
         time.sleep(2)
         self.status()
 
+    def newmac(self):
+        typecode = random.randint(0,1000)%4*4+2
+        oui = '0'
+        result = str(self.b10t16[random.randint(0,15)])
+        result += str(self.b10t16[typecode]) + ':'
+        result += oui + oui + ':' + oui + oui + ':'
+        result += str(self.b10t16[random.randint(0,15)])
+        result += str(self.b10t16[random.randint(0,15)]) + ':'
+        result += str(self.b10t16[random.randint(0,15)])
+        result += str(self.b10t16[random.randint(0,15)]) + ':'
+        result += str(self.b10t16[random.randint(0,15)])
+        result += str(self.b10t16[random.randint(0,15)])
+        self.macaddress = result
+
     def configuration(self):
         with open(self.guestcfg,'r') as fh:
             self.config = fh.read().split('\n')
@@ -434,7 +453,7 @@ class Guestbridge:
         self.config_bridge = {}
         self.pattern = {'guestname':'^-name\s+["\']{0,1}([^"\' ]+)["\']{0,1}'}
         self.pattern['guestimg'] ='^-drive\s+file=([^"\', ]+),' 
-        self.pattern['tap'] = '^-device\s+.*netdev=([^"\', ]+),\s*mac=([^"\' ]+)'
+        self.pattern['tap'] = '^-device\s+(.*)netdev=([^"\', ]+),\s*mac=([^"\' ]+)'
         self.pattern['socketpath'] = '^-chardev\s+socket,.*path=([^"\', ]+)'
         self.pattern['mountpath'] = '^-chardev\s+socket,.*path=[^\@]+([^"\', ]+).sock'
         self.pattern['wish'] = '^-device\s+([^"\', ]+),\s*host=([^"\', ]+)'
@@ -452,9 +471,13 @@ class Guestbridge:
                 continue
             self.match = re.search(self.pattern['tap'],l)
             if self.match:
-                self.tap[self.match.group(1)] = self.match.group(2)
-                self.config_bridge[self.match.group(2).replace(':','')] = \
-                self.match.group(2)
+                self.tap[self.match.group(2)] = self.match.group(3)
+                self.config_bridge[self.match.group(3).replace(':','')] = \
+                self.match.group(3)
+                self.newmac()
+                self.config[index] = '-device ' + self.match.group(1)  
+                self.config[index] += 'netdev=' + self.match.group(2) 
+                self.config[index] += ',mac=' + self.macaddress
                 continue
             self.match = re.search(self.pattern['socketpath'],l)
             if self.match:

@@ -639,9 +639,10 @@ gb.shutdown()
     [[ -r $confdir/\${name} ]] || return
     $socat - UNIX-CONNECT:${socksdir}/\${name} <<< 'system_powerdown' || return
     $sleep 5
-    gb.rebind2module $confdir/\${name} || return
+    : gb.timer will handle proper rebinding.
+#    gb.rebind2module $confdir/\${name} || return
     $socat - UNIX-CONNECT:${socksdir}/\${name} <<< 'info name' 2>/dev/null && return 1
-    $sudo $rm -f ${socksdir}/\${name}
+#    $sudo $rm -f ${socksdir}/\${name}
 }
 gb.capabilities()
 {
