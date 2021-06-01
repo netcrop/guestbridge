@@ -180,11 +180,11 @@ gb.snapshot.delete()
         \builtin echo "invalid \$vmfile"
         return 1
     }
-    set -x
+#    set -x
     local tag="\$($qemu_img snapshot -l \${vmfile} |\
     $tail -n +3|$tr -s ' ' | $cut -d' ' -f1,2 |\
     $egrep "^\${id} " | $cut -d' ' -f2)" 
-#    $qemu_img snapshot -d \${tag} \${vmfile}
+    $qemu_img snapshot -d \${tag} \${vmfile}
     set +x
 }
 gb.snapshot.list()
