@@ -175,14 +175,15 @@ gb.snapshot.cron()
 gb.snapshot.delete()
 {
     local vmfile=\${1:?[vm qcow2] [id for deleting]}
-    local tag=\${2:?[id]}
+    local id=\${2:?[id]}
     $file -b \$vmfile | $grep -q 'QCOW2' || {
         \builtin echo "invalid \$vmfile"
         return 1
     }
     set -x
     $qemu_img snapshot -l \${vmfile} |\
-    $tail -n +3|$tr -s ' ' | $cut -d' ' -f1,2 | $egrep "^\${id} " 
+    $tail -n +3|$tr -s ' ' | $cut -d' ' -f1,2 |\
+    $egrep "^\${id} " | $cut -d' ' -f2 
 #    $qemu_img snapshot -d \${tag} \${vmfile}
     set +x
 }
