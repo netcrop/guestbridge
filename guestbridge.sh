@@ -3,7 +3,7 @@ gb.substitute()
     local cmdlist reslist devlist pkglist cmd i pkg seed \
     confdir moddir guestbridgedir socksdir virtiofsdsocksdir vfiodir \
     devlist reslist blacklist bindir mandir ovmfdir cmd i pcidir 
-    cmdlist=(sed shred perl dirname
+    cmdlist=(sed shred perl dirname tr tail
     basename cat ls cut bash man mktemp grep egrep env mv sudo
     cp chmod ln chown rm touch head mkdir id find ss file
     modprobe lsmod ip flock groups passwd useradd groupadd
@@ -180,7 +180,11 @@ gb.snapshot.delete()
         \builtin echo "invalid \$vmfile"
         return 1
     }
-    $qemu_img snapshot -d \${tag} \${vmfile}
+    set -x
+    local data=\$($qemu_img snapshot -l \${vmfile} |\
+    $tail -n +3|$tr -s ' ' | $cut -d' ' -f1,2) 
+#    $qemu_img snapshot -d \${tag} \${vmfile}
+    set +x
 }
 gb.snapshot.list()
 {
