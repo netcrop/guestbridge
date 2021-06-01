@@ -181,9 +181,9 @@ gb.snapshot.delete()
         return 1
     }
     set -x
-    $qemu_img snapshot -l \${vmfile} |\
+    local tag="\$($qemu_img snapshot -l \${vmfile} |\
     $tail -n +3|$tr -s ' ' | $cut -d' ' -f1,2 |\
-    $egrep "^\${id} " | $cut -d' ' -f2 
+    $egrep "^\${id} " | $cut -d' ' -f2)" 
 #    $qemu_img snapshot -d \${tag} \${vmfile}
     set +x
 }
