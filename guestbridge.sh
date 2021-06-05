@@ -80,7 +80,7 @@ gb.substitute()
     \builtin source <($cat<<-SUB
 gb.check.kvm.support()
 {
-    $egrep -o -w -e "vmx" -e "svm" /proc/cpuinfo
+    $egrep -o -w -e "vmx" -e "svm" /proc/cpuinfo | $head -n 1
 }
 gb.add.kvm()
 {
