@@ -78,7 +78,10 @@ gb.substitute()
     )
 
     \builtin source <($cat<<-SUB
-
+gb.check.kvm.support()
+{
+    $egrep -o -w -e "vmx" -e "svm" /proc/cpuinfo
+}
 gb.add.kvm()
 {
     : System Group kvm Not yet exist, create it. 
@@ -1018,7 +1021,7 @@ gb.info()
     install qemu-headless
     # qemu-system-x86_64 -device vfio-pci,help
     # cpu support
-    grep vmx /proc/cpuinfo
+    grep vmx|svm /proc/cpuinfo
 
     # Kernel support y or m
     zgrep CONFIG_KVM /proc/config.gz
