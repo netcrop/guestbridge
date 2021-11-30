@@ -8,10 +8,16 @@ gb.substitute()
     cp chmod ln chown rm touch head mkdir id find ss file
     modprobe lsmod ip flock groups passwd useradd groupadd
     lspci tee umount mount grub-mkconfig ethtool sleep modinfo kill
-    lsusb realpath mkinitcpio parted less systemctl
+    lsusb realpath mkinitcpio parted less systemctl zgrep
     gpasswd bridge stat date setpci)
-    devlist=(virtiofsd qemu-img qemu-nbd qemu-system-x86_64 socat)
-    pkglist=(python-pytz edk2-ovmf)
+    pkglist=(python-pytz edk2-ovmf usbutils parted qemu-headless socat)
+    devlist=(qemu-img qemu-nbd qemu-system-x86_64 socat)
+    for pkg in ${pkglist[@]};do
+        pacman -Qi $pkg >/dev/null 2>&1 && continue
+        \builtin printf "%s\n" "$FUNCNAME Require pkg: $pkg"
+        return
+    done
+ 
     for cmd in ${cmdlist[@]};do
         i=($(\builtin type -afp $cmd))
         [[ -n $i ]] || {
@@ -19,11 +25,6 @@ gb.substitute()
             return
         }
         \builtin eval "local ${cmd//-/_}=${i:-:}"
-    done
-    for pkg in ${pkglist[@]};do
-        pacman -Qi $pkg >/dev/null 2>&1 && continue
-        \builtin printf "%s\n" "$FUNCNAME Require: $pkg"
-        return
     done
     for cmd in ${devlist[@]};do
         i=($(\builtin type -afp $cmd))
@@ -45,6 +46,7 @@ gb.substitute()
     local devicedir='/sys/bus/pci/devices/'
     local socksdir='/srv/kvm/socks/'
     local vbiosdir='/srv/kvm/vbios/'
+    local vmdir='/srv/kvm/farm/'
     local isodir='/srv/kvm/iso/'
     local vfiodir='/dev/vfio/'
     local bindir='/usr/local/bin/'
@@ -80,9 +82,19 @@ gb.substitute()
     \builtin source <($cat<<-SUB
 gb.check.kvm.support()
 {
-    declare -A Res={[vmx]=intel [svm]=amd}
+    declare -A Res=([vmx]=INTEL_VMX [svm]=AMD_SVM [kvm_intel]=INTEL_VT-D [kvm_amd]=AMD_VMX)
     local flag="\$($egrep -o -w -e "vmx" -e "svm" /proc/cpuinfo | $head -n 1)"
+    [[ -z "\${flag}" ]] && {
+        \builtin echo "None support for KVM."
+        return 
+    }
+    local module=\$($lsmod | $egrep -o -w -e "kvm_intel" -e "kvm_amd" | $head -n 1)
+    [[ -z "\${module}" ]] && {
+        \builtin echo "enable BIOS support for \${Res[\${module}]}"
+        return 
+    }
     \builtin echo \${Res[\$flag]}
+    $zgrep -e CONFIG_KVM -e VIRTIO /proc/config.gz
 }
 gb.add.kvm()
 {
@@ -155,6 +167,7 @@ gb.pl.install()
 gb.snapshot.restore()
 {
     local vmfile=\${1:?[vm qcow2] [tag name for applying]}
+    vmfile=\$($realpath \$vmfile)
     local tag=\${2:?[tag]}
     $file -b \$vmfile | $grep -q 'QCOW2' || {
         \builtin echo "invalid \$vmfile"
@@ -165,6 +178,7 @@ gb.snapshot.restore()
 gb.snapshot()
 {
     local img=\${1:?[vm qcow2]}
+    img=\$($realpath \$img)
     local tag="\$(TZ='Asia/Shanghai' $date +"%Y%m%d%H%M%S")"
     $file -b \${img}| $grep -q 'QCOW2' || return
     $qemu_img snapshot -c \${tag} \${img}  
@@ -172,7 +186,7 @@ gb.snapshot()
 gb.snapshot.cron()
 {
     local tag="\$(TZ='Asia/Shanghai' $date +"%Y%m%d%H%M%S")"
-    for i in $guestbridgedir/*.qcow2;do
+    for i in $vmdir/*.qcow2;do
         $file -b \$i| $grep -q 'QCOW2' || continue
         $qemu_img snapshot -c \${tag} \${i}
     done
@@ -180,6 +194,7 @@ gb.snapshot.cron()
 gb.snapshot.delete()
 {
     local vmfile=\${1:?[vm qcow2] [id for deleting]}
+    vmfile=\$($realpath \$vmfile)
     local id=\${2:?[id]}
     $file -b \$vmfile | $grep -q 'QCOW2' || {
         \builtin echo "invalid \$vmfile"
@@ -195,6 +210,7 @@ gb.snapshot.delete()
 gb.snapshot.list()
 {
     local vmfile=\${1:?[vm qcow2]}
+    vmfile=\$($realpath \$vmfile)
     $file -b \$vmfile | $grep -q 'QCOW2' || {
         \builtin echo "invalid \$vmfile"
         return 1
@@ -205,6 +221,7 @@ gb.snapshot.tag()
 {
     local tag=\$(TZ='Asia/Shanghai' $date +"%Y%m%d%H%M%S").snapshot
     local vmfile=\${1:?[vm qcow2]}
+    vmfile=\$($realpath \$vmfile)
     $file -b \$vmfile | $grep -q 'QCOW2' || {
         \builtin echo "invalid \$vmfile"
         return 1
@@ -215,14 +232,14 @@ gb.snapshot.tag()
 gb.dirperm()
 {
     $sudo $chown -R $USER:kvm $guestbridgedir
-    $sudo $chmod --quiet g=rw $socksdir/*   
-    $sudo $chmod --quiet gu=r $guestbridgedir/vbios/*
-    $sudo $chmod --quiet gu=r $guestbridgedir/ovmf/*_OVMF_VARS.fd
-    $sudo $chmod gu=r $guestbridgedir/ovmf/OVMF_VARS.fd
-    $sudo $chmod gu=r $guestbridgedir/ovmf/OVMF_CODE.fd
-    $sudo $chmod --quiet gu=r $guestbridgedir/iso/*
-    $sudo $chmod u=rw,g=r $guestbridgedir/conf/*
-    $sudo $chmod u=rw,g=r  $guestbridgedir/*.qcow2
+    $sudo $chmod --quiet g=rw,o= $socksdir/*   
+    $sudo $chmod --quiet gu=r,o= $guestbridgedir/vbios/*
+    $sudo $chmod --quiet gu=r,o= $guestbridgedir/ovmf/*_OVMF_VARS.fd
+    $sudo $chmod --quiet gu=r,o= $guestbridgedir/ovmf/OVMF_VARS.fd
+    $sudo $chmod --quiet gu=r,o= $guestbridgedir/ovmf/OVMF_CODE.fd
+    $sudo $chmod --quiet gu=r,o= $guestbridgedir/iso/*
+    $sudo $chmod --quiet u=rw,g=r,o= $guestbridgedir/conf/*
+    $sudo $chmod --quiet u=rw,g=r,o=  $guestbridgedir/*.qcow2
 }
 gb.checkreset()
 {
@@ -357,7 +374,7 @@ gb.rebind()
 }
 gb.bind()
 {
-    local help='[bdf][bind driver: ehci-pci/ohci-pci/xhci-hcd/vfio-pci/i801_smbus]'
+    local help='[bdf][bind driver: ehci-pci/ohci-pci/xhci_hcd/vfio-pci/i801_smbus]'
     local bdf=\${1:?\$help}
     local bind=\${2:?\$help}
     bdf="0000:\${bdf}"
@@ -1002,6 +1019,7 @@ GBIOMMU
 }
 gb.socks()
 {
+    : "gb.socks hostname info cpus network name"
     local help="[hostname/socket file][monitor cmds eg:info name/quit]"
     local name=\${1:?\$help}
     \builtin shift
@@ -1020,6 +1038,7 @@ gb.socks()
 gb.info()
 {
     $less<<-KVMINFO
+    # BIOS settings Enable SVM mode for AMD CPU
     install qemu-headless
     # qemu-system-x86_64 -device vfio-pci,help
     # cpu support
@@ -1043,6 +1062,8 @@ gb.info()
     gb.reconfig
     gb.dirperm
 
+    # add systemd user and group kvm 
+    useradd --system ...
     ##########################################
     # Only for pci pass through via IOMMU/Intel VT-d/Amd-Vi
     ##########################################
@@ -1125,10 +1146,12 @@ gb.info()
 
     # Resize filesystem and partition
     # boot arch.iso with vm.qcow2
-    cfdisk /dev/sdX
-    resize partition
-    e2fsck -f /dev/sdXY
-    resize2fs /dev/sdXY SIZE
+    parted /dev/sda
+    > resizepart N
+    > End 40000
+    # Check partition
+    e2fsck -f /dev/sdaN
+    resize2fs /dev/sdaN
 KVMINFO
 }
 
@@ -1273,6 +1296,9 @@ gb.reconfig()
     $sudo $cp $ovmfdir/OVMF_VARS.fd $guestbridgedir/ovmf/OVMF_VARS.fd 
     $sudo $chown \$USER:kvm $guestbridgedir/ovmf/OVMF_VARS.fd 
     $sudo $chmod gu=r,o= $guestbridgedir/ovmf/OVMF_VARS.fd 
+    $sudo $mkdir -p $vmdir 
+    $sudo $chown \$USER:kvm $vmdir 
+    $sudo $chmod gu=rwx,o= $vmdir 
     $sudo $mkdir -p $socksdir 
     $sudo $chown \$USER:kvm $socksdir 
     $sudo $chmod gu=rwx,o= $socksdir 
