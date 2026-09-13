@@ -1,0 +1,5 @@
+/etc/modprobe/vfio.conf
+options vfio-pci disable_idle_d3=1,disable_vga=1
+modinfo vfio_pci|grep d3
+parm:           disable_idle_d3:Disable using the PCI D3 low power state for idle, unused devices
+that has never worked. AMD cards dont listen to the kernels of their host machine when it comes to powerplay. never have.

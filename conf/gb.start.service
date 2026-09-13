@@ -1,0 +1,14 @@
+[Unit]
+Description=GuestBridge start daemon
+Wants=network-online.target
+After=network-online.target
+Requires=network-online.target
+
+[Service]
+Type=forking
+LimitMEMLOCK=12G
+ExecStart=-/usr/local/bin/gb.start
+KillMode=process
+Restart=always
+[Install]
+WantedBy=multi-user.target

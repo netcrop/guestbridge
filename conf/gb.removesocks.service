@@ -1,0 +1,12 @@
+[Unit]
+Description=Brideguest remove all socks Service
+ConditionACPower=true
+
+[Service]
+User=kvm
+Group=kvm
+Type=oneshot
+ExecStart=-/usr/local/bin/guestbridge removeallsocks
+Nice=0
+IOSchedulingClass=best-effort
+IOSchedulingPriority=0

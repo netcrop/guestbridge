@@ -1,0 +1,30 @@
+digraph "classes_guestbridge" {
+rankdir=BT
+charset="utf-8"
+"gb.bdf.Bdf" [color="black", fontcolor="black", label=<{Bdf|<br ALIGN="LEFT"/>|find_bdf(input)<br ALIGN="LEFT"/>find_bdf_by_deviceid(deviceid)<br ALIGN="LEFT"/>find_bdf_by_interface()<br ALIGN="LEFT"/>find_bdf_by_mac_address(mac_address)<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"gb.config.Config" [color="black", fontcolor="black", label=<{Config|<br ALIGN="LEFT"/>|configready()<br ALIGN="LEFT"/>outputing()<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"gb.device.Device" [color="black", fontcolor="black", label=<{Device|device : NoneType<br ALIGN="LEFT"/>|binding()<br ALIGN="LEFT"/>rebinding()<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"gb.driver.Driver" [color="black", fontcolor="black", label=<{Driver|<br ALIGN="LEFT"/>|bind(bdf, binddriver)<br ALIGN="LEFT"/>prebind()<br ALIGN="LEFT"/>prerebind()<br ALIGN="LEFT"/>preunbind()<br ALIGN="LEFT"/>rebind(bdf, unbinddriver, binddriver)<br ALIGN="LEFT"/>unbind(bdf, unbinddriver)<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"gb.guestbridge.Guestbridge" [color="black", fontcolor="black", label=<{Guestbridge|<br ALIGN="LEFT"/>|}>, shape="record", style="solid"];
+"gb.network.Network" [color="black", fontcolor="black", label=<{Network|network : NoneType<br ALIGN="LEFT"/>|bridgetap()<br ALIGN="LEFT"/>unbridgetap()<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"gb.qemu.Qemu" [color="black", fontcolor="black", label=<{Qemu|<br ALIGN="LEFT"/>|cleanup()<br ALIGN="LEFT"/>imageinfo()<br ALIGN="LEFT"/>output()<br ALIGN="LEFT"/>precleanup()<br ALIGN="LEFT"/>preoutput()<br ALIGN="LEFT"/>prestartvm()<br ALIGN="LEFT"/>removeallsocks()<br ALIGN="LEFT"/>snapshot()<br ALIGN="LEFT"/>snapshotdelete()<br ALIGN="LEFT"/>snapshotlist()<br ALIGN="LEFT"/>snapshotrepo()<br ALIGN="LEFT"/>snapshotrestore()<br ALIGN="LEFT"/>socketstatus()<br ALIGN="LEFT"/>start()<br ALIGN="LEFT"/>startvm()<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"gb.qmp.Qmp" [color="black", fontcolor="black", label=<{Qmp|<br ALIGN="LEFT"/>|brief()<br ALIGN="LEFT"/>quit()<br ALIGN="LEFT"/>removesocks()<br ALIGN="LEFT"/>shutdown()<br ALIGN="LEFT"/>socksconnect()<br ALIGN="LEFT"/>sockssend()<br ALIGN="LEFT"/>status()<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"gb.toolset.Toolset" [color="black", fontcolor="black", label=<{Toolset|argc<br ALIGN="LEFT"/>args : list<br ALIGN="LEFT"/>argv : tuple<br ALIGN="LEFT"/>config<br ALIGN="LEFT"/>debugging : int<br ALIGN="LEFT"/>driver<br ALIGN="LEFT"/>fun : dict<br ALIGN="LEFT"/>option<br ALIGN="LEFT"/>pattern<br ALIGN="LEFT"/>permit : str<br ALIGN="LEFT"/>proc : CompletedProcess, NoneType<br ALIGN="LEFT"/>qmp<br ALIGN="LEFT"/>toolset<br ALIGN="LEFT"/>tpm<br ALIGN="LEFT"/>vfio<br ALIGN="LEFT"/>|debug(info, emit, debugging)<br ALIGN="LEFT"/>funlock(funname)<br ALIGN="LEFT"/>run(cmd, infile, outfile, stdin, stdout, text, pass_fds, exit_errorcode, shell, debugging)<br ALIGN="LEFT"/>setfun()<br ALIGN="LEFT"/>usage()<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"gb.tpm.Tpm" [color="black", fontcolor="black", label=<{Tpm|<br ALIGN="LEFT"/>|swtpm()<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"gb.vfio.Vfio" [color="black", fontcolor="black", label=<{Vfio|<br ALIGN="LEFT"/>|iommu()<br ALIGN="LEFT"/>}>, shape="record", style="solid"];
+"gb.toolset.Toolset.__init__.config" [color="black", fontcolor="black", label=<{config|bridge<br ALIGN="LEFT"/>content<br ALIGN="LEFT"/>device<br ALIGN="LEFT"/>guestcfg<br ALIGN="LEFT"/>guestname<br ALIGN="LEFT"/>option<br ALIGN="LEFT"/>pci<br ALIGN="LEFT"/>result<br ALIGN="LEFT"/>socksdir<br ALIGN="LEFT"/>sockspath<br ALIGN="LEFT"/>tap<br ALIGN="LEFT"/>|}>, shape="record", style="solid"];
+"gb.toolset.Toolset.__init__.driver" [color="black", fontcolor="black", label=<{driver|fleet<br ALIGN="LEFT"/>pcidir<br ALIGN="LEFT"/>|}>, shape="record", style="solid"];
+"gb.toolset.Toolset.__init__.pattern" [color="black", fontcolor="black", label=<{pattern|bdf<br ALIGN="LEFT"/>bdf_deviceid<br ALIGN="LEFT"/>deviceid<br ALIGN="LEFT"/>indexedname<br ALIGN="LEFT"/>interface<br ALIGN="LEFT"/>long_bdf<br ALIGN="LEFT"/>macaddress<br ALIGN="LEFT"/>|}>, shape="record", style="solid"];
+"gb.toolset.Toolset.__init__.qmp" [color="black", fontcolor="black", label=<{qmp|color<br ALIGN="LEFT"/>message<br ALIGN="LEFT"/>|}>, shape="record", style="solid"];
+"gb.toolset.Toolset.__init__.toolset" [color="black", fontcolor="black", label=<{toolset|backuplock<br ALIGN="LEFT"/>guesthomedir<br ALIGN="LEFT"/>lockfile<br ALIGN="LEFT"/>pci_conf<br ALIGN="LEFT"/>uid<br ALIGN="LEFT"/>username<br ALIGN="LEFT"/>|}>, shape="record", style="solid"];
+"gb.toolset.Toolset.__init__.tpm" [color="black", fontcolor="black", label=<{tpm|socksdir<br ALIGN="LEFT"/>sockspath<br ALIGN="LEFT"/>|}>, shape="record", style="solid"];
+"gb.toolset.Toolset.__init__.vfio" [color="black", fontcolor="black", label=<{vfio|pattern<br ALIGN="LEFT"/>|}>, shape="record", style="solid"];
+"gb.toolset.Toolset.__init__.config" -> "gb.toolset.Toolset" [arrowhead="diamond", arrowtail="none", fontcolor="green", label="config", style="solid"];
+"gb.toolset.Toolset.__init__.driver" -> "gb.toolset.Toolset" [arrowhead="diamond", arrowtail="none", fontcolor="green", label="driver", style="solid"];
+"gb.toolset.Toolset.__init__.pattern" -> "gb.toolset.Toolset" [arrowhead="diamond", arrowtail="none", fontcolor="green", label="pattern", style="solid"];
+"gb.toolset.Toolset.__init__.qmp" -> "gb.toolset.Toolset" [arrowhead="diamond", arrowtail="none", fontcolor="green", label="qmp", style="solid"];
+"gb.toolset.Toolset.__init__.toolset" -> "gb.toolset.Toolset" [arrowhead="diamond", arrowtail="none", fontcolor="green", label="toolset", style="solid"];
+"gb.toolset.Toolset.__init__.tpm" -> "gb.toolset.Toolset" [arrowhead="diamond", arrowtail="none", fontcolor="green", label="tpm", style="solid"];
+"gb.toolset.Toolset.__init__.vfio" -> "gb.toolset.Toolset" [arrowhead="diamond", arrowtail="none", fontcolor="green", label="vfio", style="solid"];
+
+}

@@ -1,0 +1,2 @@
+{ rank=same;"gb.qemu";"gb.vfio";"gb.qmp";"gb.tpm";"gb.network";"gb.bdf"}
+{ rank=same; "gb.device";"gb.driver"}

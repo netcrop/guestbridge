@@ -1,0 +1,32 @@
+digraph "packages_guestbridge" {
+rankdir=BT
+charset="utf-8"
+"gb" [color="black", label=<gb>, shape="box", style="solid"];
+"gb.bdf" [color="black", label=<gb.bdf>, shape="box", style="solid"];
+"gb.config" [color="black", label=<gb.config>, shape="box", style="solid"];
+"gb.device" [color="black", label=<gb.device>, shape="box", style="solid"];
+"gb.driver" [color="black", label=<gb.driver>, shape="box", style="solid"];
+"gb.guestbridge" [color="black", label=<gb.guestbridge>, shape="box", style="solid"];
+"gb.network" [color="black", label=<gb.network>, shape="box", style="solid"];
+"gb.qemu" [color="black", label=<gb.qemu>, shape="box", style="solid"];
+"gb.qmp" [color="black", label=<gb.qmp>, shape="box", style="solid"];
+"gb.toolset" [color="black", label=<gb.toolset>, shape="box", style="solid"];
+"gb.tpm" [color="black", label=<gb.tpm>, shape="box", style="solid"];
+"gb.vfio" [color="black", label=<gb.vfio>, shape="box", style="solid"];
+"gb.bdf" -> "gb.toolset" [arrowhead="open", arrowtail="none"];
+"gb.config" -> "gb.toolset" [arrowhead="open", arrowtail="none"];
+"gb.device" -> "gb.config" [arrowhead="open", arrowtail="none"];
+"gb.driver" -> "gb.toolset" [arrowhead="open", arrowtail="none"];
+"gb.guestbridge" -> "gb.qemu" [arrowhead="open", arrowtail="none"];
+"gb.guestbridge" -> "gb.vfio" [arrowhead="open", arrowtail="none"];
+"gb.network" -> "gb.toolset" [arrowhead="open", arrowtail="none"];
+"gb.qemu" -> "gb.device" [arrowhead="open", arrowtail="none"];
+"gb.qemu" -> "gb.driver" [arrowhead="open", arrowtail="none"];
+"gb.qemu" -> "gb.network" [arrowhead="open", arrowtail="none"];
+"gb.qmp" -> "gb.toolset" [arrowhead="open", arrowtail="none"];
+"gb.tpm" -> "gb.toolset" [arrowhead="open", arrowtail="none"];
+"gb.vfio" -> "gb.toolset" [arrowhead="open", arrowtail="none"];
+
+{ rank=same;"gb.qemu";"gb.vfio";"gb.qmp";"gb.tpm";"gb.network";"gb.bdf"}
+{ rank=same; "gb.device";"gb.driver"}
+}
