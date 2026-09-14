@@ -87,7 +87,7 @@ grub.reconfig inside guest OS.
 gb.install.start.cron
 gb.install.removesocks.cron
 ```
-* Maintenance
+## Maintenance
 * Mount/Unmount Modify qcow2
 ```
 gb.mount.qcow2
